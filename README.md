@@ -8,7 +8,7 @@ Sign in with your Sub-Zero Group Owner email and password directly in Home Assis
 
 ## Releases
 
-[![Latest stable release](https://img.shields.io/github/v/release/orienw/ha-subzero?sort=date&style=for-the-badge&label=stable)](https://github.com/orienw/ha-subzero/releases/latest)
+[![Latest stable release](https://img.shields.io/github/v/release/orienw/ha-subzero?sort=date&style=for-the-badge&label=stable&color=blue)](https://github.com/orienw/ha-subzero/releases/latest)
 [![Latest beta release](https://img.shields.io/github/v/release/orienw/ha-subzero?include_prereleases&filter=*b*&sort=date&style=for-the-badge&label=beta&color=orange)](https://github.com/orienw/ha-subzero/releases)
 
 ## Install with HACS
