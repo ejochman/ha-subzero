@@ -6,6 +6,11 @@ A custom integration for connected Sub-Zero refrigerators, freezers, wine storag
 
 Sign in with your Sub-Zero Group Owner email and password directly in Home Assistant. Appliances are monitored and controlled over Sub-Zero's cloud service using their existing Wi-Fi connections. Bluetooth is not required.
 
+## Releases
+
+[![Latest stable release](https://img.shields.io/github/v/release/orienw/ha-subzero?sort=date&style=for-the-badge&label=stable)](https://github.com/orienw/ha-subzero/releases/latest)
+[![Latest beta release](https://img.shields.io/github/v/release/orienw/ha-subzero?include_prereleases&filter=*b*&sort=date&style=for-the-badge&label=beta&color=orange)](https://github.com/orienw/ha-subzero/releases)
+
 ## Install with HACS
 
 Requires Home Assistant **2026.8.0 or newer** and an appliance already connected to your Sub-Zero account.
