@@ -38,7 +38,8 @@ pytestmark = pytest.mark.parametrize("cloud_appliance", [ICE_STATE], indirect=Tr
 
 async def test_ice_maker_discovery(hass, cloud_appliance):
     assert hass.states.get("select.kitchen_ice_maker").attributes["options"] == ["Off", "On"]
-    assert hass.states.get("select.kitchen_mode").attributes["options"] == ["Normal", "Sabbath"]
+    assert hass.states.get("select.kitchen_mode") is None
+    assert hass.states.get("binary_sensor.kitchen_sabbath_mode").state == "off"
     assert hass.states.get("sensor.kitchen_ice_maker_cleaning_stage").state == "Not cleaning"
     assert hass.states.get("binary_sensor.kitchen_water_filter_inserted").state == "on"
     assert hass.states.get("binary_sensor.kitchen_ice_maker_door").state == "off"
@@ -66,8 +67,9 @@ async def test_ice_controls_and_cleaning_updates(hass, cloud_appliance):
     for value in [True, "65", 999]:
         await cloud_appliance.update({"ice_maker_clean_stage": value})
         assert hass.states.get("sensor.kitchen_ice_maker_cleaning_stage").state == "unknown"
-    with pytest.raises(ServiceValidationError):
-        await cloud_appliance.coordinator.async_set_properties({"ice_maker_clean_on": True})
+    for key in ["ice_maker_clean_on", "sabbath_on"]:
+        with pytest.raises(ServiceValidationError):
+            await cloud_appliance.coordinator.async_set_properties({key: True})
 
 
 async def test_schedule_ice_delay_converts_units_and_refreshes(hass, cloud_appliance):

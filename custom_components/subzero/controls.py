@@ -105,7 +105,7 @@ def supports_control(data: dict, key: str) -> bool:
         return False
     if key in HOOD_BOOLEAN_KEYS or key in HOOD_INTEGER_RANGES:
         return is_hood(data)
-    if is_ice_maker(data) and key in {"ice_maker_on", "sabbath_on", "door_ajar_timeout"}:
+    if is_ice_maker(data) and key in {"ice_maker_on", "door_ajar_timeout"}:
         return True
     if key.startswith(("cav_", "cav2_")):
         return key in WRITABLE_BOOLEAN_KEYS | WRITABLE_INTEGER_KEYS

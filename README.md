@@ -92,7 +92,7 @@ Wine storage units expose setpoint controls from 40–65°F, climate entities, d
 
 ## Sub-Zero dedicated ice makers
 
-Dedicated ice makers provide an On/Off ice control, Normal/Sabbath mode, and door-open delay setting. Status includes the door, water filter, delay schedule, cleaning stage, next cleaning, and fault or winterization flags when reported.
+Dedicated ice makers provide an On/Off ice control and a door-open delay setting. Status includes Sabbath mode, the door, water filter, delay schedule, cleaning stage, next cleaning, and fault or winterization flags when reported.
 
 Use the **Sub-Zero: Schedule ice delay** action to pause production for 1–12 hours. Choose the ice maker, how many minutes from now to begin (zero starts immediately), and whether to repeat daily. The settings are sent together and the appliance status is refreshed.
 

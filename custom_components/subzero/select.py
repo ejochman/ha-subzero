@@ -89,8 +89,6 @@ def control_keys(key: str, data: dict) -> tuple[str, ...]:
             else ()
         )
     if key == "operating_mode":
-        if is_ice_maker(data):
-            return ("sabbath_on",) if "sabbath_on" in data else ()
         return tuple(k for k in FRIDGE_MODE_KEYS if k in data) if is_fridge(data) else ()
     return (key,) if key in ENUM_OPTIONS and supports_control(data, key) else ()
 
