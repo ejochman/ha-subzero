@@ -104,6 +104,34 @@ async def test_failed_refresh_preserves_the_command_error(cloud_appliance):
     client.set_property.assert_awaited_once_with("appliance", "night_ice_on", False)
 
 
+async def test_failed_confirmation_read_recovers_without_a_push(hass, cloud_appliance):
+    client = cloud_appliance.client
+    reads = client.state.await_count
+    client.set_property.side_effect = ApiError("Sub-Zero returned HTTP 503.")
+    responding = asyncio.Event()
+
+    async def read(device_id):
+        if client.state.await_count == reads + 1:
+            raise ApiError("Status read failed.")
+        await responding.wait()
+        return dict(cloud_appliance.state)
+
+    client.state.side_effect = read
+    with pytest.raises(HomeAssistantError, match="HTTP 503"):
+        await cloud_appliance.coordinator.async_set_properties({"night_ice_on": False})
+
+    client.set_property.assert_awaited_once_with("appliance", "night_ice_on", False)
+    assert not cloud_appliance.coordinator.last_update_success
+    recovery = cloud_appliance.entry.runtime_data._recoveries["appliance"]
+    assert not recovery.done()
+    responding.set()
+    await recovery
+
+    assert cloud_appliance.coordinator.last_update_success
+    assert client.state.await_count == reads + 2
+    assert hass.states.get("select.kitchen_ice_maker").state == "Night ice"
+
+
 @pytest.mark.parametrize("error", [InvalidAuth("Expired"), RateLimited(60)])
 @pytest.mark.parametrize("control", ["mode", "property"])
 async def test_authentication_and_rate_limits_stop_without_retry(
@@ -249,7 +277,8 @@ async def test_cancelled_command_leaves_status_read_running(cloud_appliance, con
         cloud_appliance.state[key] = value
 
     async def read(device_id):
-        entered.set_result(asyncio.current_task())
+        if not entered.done():
+            entered.set_result(asyncio.current_task())
         await finish.wait()
         if error is not None:
             raise error

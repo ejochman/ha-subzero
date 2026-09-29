@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
@@ -82,6 +82,7 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
         client: SubZeroClient,
         device_id: str,
         device: dict,
+        read_failed: Callable[[SubZeroCoordinator], None],
     ):
         super().__init__(
             hass,
@@ -94,6 +95,7 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
         self.entry = entry
         self.device_id = device_id
         self.device = dict(device)
+        self._read_failed = read_failed
         self.unrecognized_keys: set[str] = set()
         self.push_stats: dict[str, int | str | None] = {
             "snapshots": 0,
@@ -360,6 +362,11 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
             )
         )
 
+    @callback
+    def _async_refresh_finished(self) -> None:
+        if not self.last_update_success:
+            self._read_failed(self)
+
     async def _async_update_data(self) -> dict:
         async with self._state_lock:
             self._read_updates = {}
@@ -524,7 +531,7 @@ class SubZeroAccount:
         self.entry = entry
         self.client = client
         self.coordinators = {
-            device_id: SubZeroCoordinator(hass, entry, client, device_id, device)
+            device_id: SubZeroCoordinator(hass, entry, client, device_id, device, self._read_failed)
             for device_id, device in selected_devices(entry).items()
         }
         self._fault_metadata: dict[tuple[str, str], dict] = {}
@@ -621,6 +628,17 @@ class SubZeroAccount:
             self._recoveries[coordinator.device_id] = self.entry.async_create_background_task(
                 self.hass, coordinator.async_recover(), "Sub-Zero state recovery"
             )
+
+    @callback
+    def _read_failed(self, coordinator: SubZeroCoordinator) -> None:
+        # With the channel open, no reconnect will prompt a recovery read.
+        if (
+            coordinator._channel_error is None
+            and self.client.push_connected
+            and self.entry.state is ConfigEntryState.LOADED
+            and not isinstance(coordinator.last_exception, ConfigEntryAuthFailed)
+        ):
+            self._start_recovery(coordinator)
 
     async def listen(self) -> None:
         backoff = RECONNECT_DELAY

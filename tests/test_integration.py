@@ -672,14 +672,44 @@ async def test_failed_status_read_recovers_on_an_existing_push_connection(hass, 
         {"appliance_model": "ANOTHER-MODEL", "ref_door_ajar": True, "ref_set_temp": 39},
     ]
     await coordinator.async_refresh()
-    assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "unavailable"
-    await updates.put(StateUpdate({"ref_door_ajar": True}, full=False))
     await hass.async_block_till_done()
     assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "on"
     assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "39"
     assert client.state.await_count == 3
+    await updates.put(StateUpdate({"ref_door_ajar": False}, full=False))
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "off"
+    assert client.state.await_count == 3
     assert client.watched == [["test-fridge"]]
     assert coordinator.push_stats["snapshots"] == 0
+
+
+@pytest.mark.parametrize("cause", ["push_closed", "channel_error", "auth", "unloading"])
+async def test_failed_status_read_leaves_recovery_to_the_connection(hass, loaded, cause):
+    entry, client, updates, _, _ = loaded
+    coordinator = entry.runtime_data.coordinators["test-fridge"]
+    if cause == "push_closed":
+        client.push_connected = False
+    elif cause == "channel_error":
+        await updates.put(("test-fridge", ApiError("Channel closed")))
+        await hass.async_block_till_done()
+    elif cause == "unloading":
+        entry.mock_state(hass, ConfigEntryState.UNLOAD_IN_PROGRESS)
+    client.state.side_effect = InvalidAuth("Expired") if cause == "auth" else ApiError("Failed")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "unavailable"
+    assert client.state.await_count == 2
+
+
+async def test_failed_setup_read_leaves_recovery_to_setup_retry(hass, loaded):
+    entry, client, _, _, _ = loaded
+    client.state.side_effect = ApiError("Status timed out")
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert client.state.await_count == 2
 
 
 async def test_recovery_preserves_incoming_updates_and_other_appliances(hass, oven_loaded):
