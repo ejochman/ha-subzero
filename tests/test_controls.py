@@ -646,6 +646,26 @@ async def test_options_follow_reported_capabilities(hass, controls):
     controls.client.set_property.assert_not_called()
 
 
+async def test_wine_storage_offers_its_reported_modes(hass, controls):
+    snapshot = {
+        "appliance_model": "DEU2450WDZ",
+        "wine_set_temp": 55,
+        "wine2_set_temp": 45,
+        "sabbath_on": False,
+    }
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").attributes["options"] == ["Normal", "Sabbath"]
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.kitchen_mode", "option": "Sabbath"},
+        blocking=True,
+    )
+    controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
+    assert hass.states.get("select.kitchen_mode").state == "Sabbath"
+
+
 @pytest.mark.parametrize(
     ("model", "maximum"),
     [("CL4850UFDID", 42), ("DEC3050R", 42), ("BI-36U", 45), ("IT-36CI", 45), ("FUTURE-MODEL", 42)],

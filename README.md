@@ -88,7 +88,7 @@ Ice-maker settings and operating modes report their on/off state alongside their
 
 Refrigerator temperatures on the primary tested model are **configured setpoints**. The integration does not infer a measured temperature from a setpoint. A negative water filter capacity indicates usage beyond the reported filter capacity.
 
-Wine storage units expose setpoint controls from 40–65°F, climate entities, display temperatures, and door status for each reported wine zone.
+Wine storage units expose setpoint controls from 40–65°F, climate entities, display temperatures, and door status for each reported wine zone. They also get the **Mode** control with the operating modes they report, such as Sabbath.
 
 ## Sub-Zero dedicated ice makers
 

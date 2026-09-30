@@ -25,6 +25,7 @@ from .controls import (
     ice_mode,
     is_fridge,
     is_ice_maker,
+    is_wine,
     supports_control,
     wash_settings_enabled,
 )
@@ -89,7 +90,10 @@ def control_keys(key: str, data: dict) -> tuple[str, ...]:
             else ()
         )
     if key == "operating_mode":
-        return tuple(k for k in FRIDGE_MODE_KEYS if k in data) if is_fridge(data) else ()
+        # The app offers modes on any appliance with a refrigerator, freezer, or wine setpoint.
+        if not (is_fridge(data) or is_wine(data)):
+            return ()
+        return tuple(k for k in FRIDGE_MODE_KEYS if k in data)
     return (key,) if key in ENUM_OPTIONS and supports_control(data, key) else ()
 
 
