@@ -1349,10 +1349,12 @@ async def test_properties_the_app_discards_are_ignored(hass, cloud_appliance):
 async def test_a_reported_type_discards_stored_properties(hass, cloud_appliance):
     assert hass.states.get("select.kitchen_accent_light").state == "On"
     assert hass.states.get("select.kitchen_ice_maker").state == "On"
+    assert hass.states.get("binary_sensor.kitchen_max_ice").state == "off"
     await cloud_appliance.update({"appliance_type": "1.2.6.1"})
     assert "accent_light_level" not in cloud_appliance.coordinator.data
     assert hass.states.get("select.kitchen_accent_light").state == "unavailable"
     assert hass.states.get("select.kitchen_ice_maker").state == "unavailable"
+    assert hass.states.get("binary_sensor.kitchen_max_ice").state == "unavailable"
 
 
 @pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
@@ -1367,15 +1369,17 @@ async def test_upgrade_removes_entities_for_discarded_properties(hass, cloud_app
             ("select", "accent_light_level"),
             ("select", "ice_maker_mode"),
             ("binary_sensor", "ice_maker_on"),
+            ("binary_sensor", "max_ice_on"),
+            ("sensor", "max_ice_end_time"),
         )
     ]
-    kept = registry.async_get_entity_id("binary_sensor", DOMAIN, "appliance_max_ice_on")
+    kept = registry.async_get_entity_id("number", DOMAIN, "appliance_ref_set_temp")
     assert kept is not None
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert all(registry.async_get(entity.entity_id) is None for entity in stale)
     assert registry.async_get(kept) is not None
-    assert hass.states.get(kept).state == "off"
+    assert hass.states.get(kept).state not in ("unavailable", "unknown")
 
 
 @pytest.mark.parametrize(
@@ -1388,15 +1392,20 @@ async def test_ice_status_appears_without_reported_ice_power(hass, cloud_applian
 
 
 @pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
-async def test_a_response_without_a_type_keeps_the_known_type(hass, cloud_appliance):
+@pytest.mark.parametrize("reported", [{}, {"appliance_type": None}, {"appliance_type": "bad"}])
+async def test_a_response_without_a_type_keeps_the_known_type(hass, cloud_appliance, reported):
     coordinator = cloud_appliance.coordinator
     cloud_appliance.state.pop("appliance_type")
+    cloud_appliance.state.update(reported)
     await coordinator.async_refresh()
     assert coordinator.data["appliance_type"] == "1.2.6.1"
     assert "ice_maker_on" not in coordinator.data
+    await cloud_appliance.update({"accent_light_level": 100, **reported})
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "accent_light_level" not in coordinator.data
     coordinator.async_set_update_error(ApiError("Offline"))
     untyped = {key: value for key, value in DISCARDING_FRIDGE.items() if key != "appliance_type"}
-    await cloud_appliance.update(untyped, full=True)
+    await cloud_appliance.update({**untyped, **reported}, full=True)
     assert coordinator.last_update_success
     assert coordinator.data["appliance_type"] == "1.2.6.1"
     assert "accent_light_level" not in coordinator.data
@@ -1422,3 +1431,46 @@ async def test_upgrade_removes_a_mode_select_left_without_modes(hass, cloud_appl
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert (registry.async_get(mode.entity_id) is None) is removed
+
+
+DISCARDING_OVEN = {
+    "appliance_model": "DO3050TE",
+    "appliance_type": "1.15.2.4",
+    "cav_set_temp": 350,
+    "cav2_set_temp": 350,
+    "cav2_probe_on": True,
+    "cav2_probe_at_set_temp": False,
+    "cav2_probe_temp": 120,
+    "cav2_probe_set_temp": 160,
+}
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_OVEN], indirect=True)
+async def test_a_discarded_probe_hides_its_entities(hass, cloud_appliance):
+    entry = cloud_appliance.entry
+    registry = er.async_get(hass)
+    unique_ids = {
+        f"appliance_{key}"
+        for key in (
+            "cav2_probe_on",
+            "cav2_probe_at_set_temp",
+            "cav2_probe_temp",
+            "cav2_probe_set_temp",
+        )
+    }
+    assert not [
+        e
+        for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if e.unique_id in unique_ids
+    ]
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    stale = [
+        registry.async_get_or_create(
+            domain, DOMAIN, "appliance_cav2_probe_set_temp", config_entry=entry
+        )
+        for domain in ("number", "sensor")
+    ]
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert all(registry.async_get(entity.entity_id) is None for entity in stale)

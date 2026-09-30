@@ -8,6 +8,7 @@ from homeassistant.exceptions import ServiceValidationError
 from .const import (
     ACCENT_LIGHT_LABELS,
     COOK_MODES,
+    DEPENDENT_ENTITY_KEYS,
     DISHWASHER_MODES,
     DISHWASHER_SWITCHES,
     DOOR_AJAR_TIMEOUTS,
@@ -67,6 +68,17 @@ def excluded_properties(data: dict) -> set[str]:
     """Properties the app discards for the reported appliance type."""
     parts = appliance_type(data)
     return EXCLUDED_PROPERTIES.get(parts[1:], set()) if parts is not None else set()
+
+
+def excluded_entity_keys(data: dict) -> set[str]:
+    """Entities the app does not show because of a discarded property."""
+    discarded = excluded_properties(data)
+    keys = {key for prop in discarded for key in (prop, *DEPENDENT_ENTITY_KEYS.get(prop, ()))}
+    if discarded.intersection(FRIDGE_MODE_KEYS) and all(
+        data.get(key) is None for key in FRIDGE_MODE_KEYS
+    ):
+        keys.add("operating_mode")
+    return keys
 
 
 def accent_light_options(data: dict) -> dict[str, int]:

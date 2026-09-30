@@ -1460,7 +1460,7 @@ async def test_fault_metadata_uses_the_appliance_series_name(hass, appliances):
     await coordinator.async_refresh()
     appliances.client.fault_metadata.assert_awaited_once_with("ICE01", "nge")
     appliances.client.fault_metadata.reset_mock()
-    await appliances.update("fridge", {"appliance_type": "not-a-type"})
+    await appliances.update("fridge", {"appliance_type": "17.99.1.1"})
     await coordinator.async_refresh()
     appliances.client.fault_metadata.assert_not_awaited()
 

@@ -100,6 +100,25 @@ EXCLUDED_PROPERTIES = {
     (15, 2, 5): {"cav2_probe_on"},
     (18, 4, 0): {"air_filter_pct_remaining", *_WINE_MODES},
 }
+# Entities the app hides with a discarded property, besides the property's own.
+DEPENDENT_ENTITY_KEYS = {
+    "air_filter_pct_remaining": ("reset_air_filter",),
+    "cav2_probe_on": ("cav2_probe_at_set_temp", "cav2_probe_set_temp", "cav2_probe_temp"),
+    "high_use_on": ("high_use_start_time", "high_use_end_time"),
+    "ice_maker_on": (
+        "ice_maker_mode",
+        "max_ice_on",
+        "night_ice_on",
+        "max_ice_start_time",
+        "max_ice_end_time",
+    ),
+    "kitchen_timer2_active": (
+        "kitchen_timer2_duration",
+        "kitchen_timer2_complete",
+        "kitchen_timer2_start_time",
+        "kitchen_timer2_end_time",
+    ),
+}
 ICE_KEYS = ("ice_maker_on", "max_ice_on", "night_ice_on")
 ICE_MODES = {"Max ice": "max_ice_on", "Night ice": "night_ice_on"}
 ICE_DELAY_KEYS = {"delay_start_offset", "delay_duration", "delay_recurring"}

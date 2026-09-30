@@ -14,8 +14,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import SubZeroClient
 from .app_config import SUBSCRIPTION_KEY
 from .auth import InvalidAuth
-from .const import DISHWASHER_SWITCHES, DOMAIN, FRIDGE_MODE_KEYS
-from .controls import excluded_properties
+from .const import DISHWASHER_SWITCHES, DOMAIN
+from .controls import excluded_entity_keys
 from .coordinator import SubZeroAccount, SubZeroCoordinator, selected_devices
 from .services import async_setup_services
 
@@ -33,12 +33,6 @@ PLATFORMS = [
 ]
 type SubZeroConfigEntry = ConfigEntry[SubZeroAccount]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-# Entities built on a property the app discards, besides the property's own entity.
-EXCLUDED_ENTITY_KEYS = {
-    "air_filter_pct_remaining": ("reset_air_filter",),
-    "ice_maker_on": ("ice_maker_mode",),
-    "kitchen_timer2_active": ("kitchen_timer2_duration",),
-}
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -77,15 +71,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: SubZeroConfigEntry) -> b
         if not device.identifiers.intersection(identifiers):
             registry.async_remove_device(device.id)
     # Entities left from earlier versions for properties the app discards.
-    excluded = set()
-    for coordinator in account.coordinators.values():
-        discarded = excluded_properties(coordinator.data)
-        keys = {key for prop in discarded for key in (prop, *EXCLUDED_ENTITY_KEYS.get(prop, ()))}
-        if discarded.intersection(FRIDGE_MODE_KEYS) and all(
-            coordinator.data.get(key) is None for key in FRIDGE_MODE_KEYS
-        ):
-            keys.add("operating_mode")
-        excluded.update(f"{coordinator.device_id}_{key}" for key in keys)
+    excluded = {
+        f"{coordinator.device_id}_{key}"
+        for coordinator in account.coordinators.values()
+        for key in excluded_entity_keys(coordinator.data)
+    }
     entities = er.async_get(hass)
     for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
         if entity.unique_id in excluded:

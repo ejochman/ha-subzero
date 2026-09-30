@@ -407,12 +407,12 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
     def _discard_excluded(self, data: dict) -> dict:
         """Drop the properties the app discards for the appliance type.
 
-        Like the app, a response without a type keeps the type already known
-        for the same appliance model.
+        Like the app, a response without a usable type keeps the type already
+        known for the same appliance model.
         """
         if (
-            "appliance_type" not in data
-            and "appliance_type" in self.data
+            appliance_type(data) is None
+            and appliance_type(self.data) is not None
             and data.get("appliance_model") == self.data.get("appliance_model")
         ):
             data = {**data, "appliance_type": self.data["appliance_type"]}
