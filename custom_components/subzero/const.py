@@ -60,6 +60,11 @@ NOTIFICATION_TYPES = {
 SETPOINT_KEYS = {"ref_set_temp", "ref2_set_temp", "frz_set_temp", "crisp_set_temp"}
 WINE_SETPOINT_KEYS = {"wine_set_temp", "wine2_set_temp"}
 FRIDGE_MODE_KEYS = ("sabbath_on", "high_use_on", "short_vacation_on", "long_vacation_on")
+# Operating modes the app hides by appliance type (series, category, version).
+EXCLUDED_MODES = {
+    (5, 1, 0): {"high_use_on", "short_vacation_on", "long_vacation_on"},
+    (18, 4, 0): {"high_use_on", "short_vacation_on", "long_vacation_on"},
+}
 ICE_KEYS = ("ice_maker_on", "max_ice_on", "night_ice_on")
 ICE_MODES = {"Max ice": "max_ice_on", "Night ice": "night_ice_on"}
 ICE_DELAY_KEYS = {"delay_start_offset", "delay_duration", "delay_recurring"}

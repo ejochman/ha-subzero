@@ -356,13 +356,15 @@ class SubZeroIceStatusSensor(SubZeroEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         data = self.coordinator.data
-        # The app's status order; a winterized ice maker reads as off.
+        # The app's status order.
         if data.get("failsafe_on") is True:
             return "Disabled"
         if data.get("delay_active") is True:
             return "Delayed"
+        if data.get("winterize_on") is True:
+            return "Off"
         if type(data.get("ice_maker_on")) is bool:
-            return "On" if data["ice_maker_on"] and data.get("winterize_on") is not True else "Off"
+            return "On" if data["ice_maker_on"] else "Off"
         return None
 
 

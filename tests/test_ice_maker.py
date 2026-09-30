@@ -76,6 +76,7 @@ async def test_ice_controls_and_cleaning_updates(hass, cloud_appliance):
     ("update", "status"),
     [
         ({"winterize_on": True}, "Off"),
+        ({"winterize_on": True, "ice_maker_on": None}, "Off"),
         ({"winterize_on": True, "delay_active": True}, "Delayed"),
         ({"winterize_on": True, "failsafe_on": True}, "Disabled"),
         ({"delay_active": True, "failsafe_on": True}, "Disabled"),

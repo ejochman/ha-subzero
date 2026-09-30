@@ -11,6 +11,7 @@ from .const import (
     COOK_MODES,
     DISHWASHER_MODES,
     DOOR_AJAR_TIMEOUTS,
+    EXCLUDED_MODES,
     FRIDGE_ENUM_OPTIONS,
     FRIDGE_MODE_KEYS,
     HOOD_SENSITIVITY,
@@ -21,11 +22,11 @@ from .const import (
 )
 from .controls import (
     accent_light_options,
+    appliance_type,
     enum_labels,
     ice_mode,
     is_fridge,
     is_ice_maker,
-    is_wine,
     supports_control,
     wash_settings_enabled,
 )
@@ -90,10 +91,13 @@ def control_keys(key: str, data: dict) -> tuple[str, ...]:
             else ()
         )
     if key == "operating_mode":
-        # The app offers modes on any appliance with a refrigerator, freezer, or wine setpoint.
-        if not (is_fridge(data) or is_wine(data)):
+        # The app offers the modes an appliance reports when it has a refrigerator,
+        # freezer, or wine setpoint, except those its appliance type excludes.
+        if all(data.get(k) is None for k in ("ref_set_temp", "frz_set_temp", "wine_set_temp")):
             return ()
-        return tuple(k for k in FRIDGE_MODE_KEYS if k in data)
+        parts = appliance_type(data)
+        excluded = EXCLUDED_MODES.get(parts[1:], set()) if parts is not None else set()
+        return tuple(k for k in FRIDGE_MODE_KEYS if data.get(k) is not None and k not in excluded)
     return (key,) if key in ENUM_OPTIONS and supports_control(data, key) else ()
 
 

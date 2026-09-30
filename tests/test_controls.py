@@ -646,12 +646,47 @@ async def test_options_follow_reported_capabilities(hass, controls):
     controls.client.set_property.assert_not_called()
 
 
-async def test_wine_storage_offers_its_reported_modes(hass, controls):
+ALL_MODES = ["Normal", "Sabbath", "High use", "Short vacation", "Long vacation"]
+
+
+@pytest.mark.parametrize(
+    ("type_id", "options"),
+    [
+        ("1.14.1.0", ALL_MODES),
+        ("1.5.1.0", ["Normal", "Sabbath"]),
+        ("1.18.4.0", ["Normal", "Sabbath"]),
+    ],
+)
+async def test_wine_storage_offers_the_modes_the_app_shows(hass, controls, type_id, options):
     snapshot = {
         "appliance_model": "DEU2450WDZ",
+        "appliance_type": type_id,
         "wine_set_temp": 55,
         "wine2_set_temp": 45,
         "sabbath_on": False,
+        "high_use_on": False,
+        "short_vacation_on": False,
+        "long_vacation_on": False,
+    }
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").attributes["options"] == options
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.kitchen_mode", "option": "Sabbath"},
+        blocking=True,
+    )
+    controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
+    assert hass.states.get("select.kitchen_mode").state == "Sabbath"
+
+
+async def test_modes_reported_as_null_are_left_out(hass, controls):
+    snapshot = {
+        "appliance_model": "DEU2450WDZ",
+        "wine_set_temp": 55,
+        "sabbath_on": False,
+        "high_use_on": None,
     }
     await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
     await hass.async_block_till_done()
@@ -663,7 +698,17 @@ async def test_wine_storage_offers_its_reported_modes(hass, controls):
         blocking=True,
     )
     controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
-    assert hass.states.get("select.kitchen_mode").state == "Sabbath"
+
+
+@pytest.mark.parametrize(
+    "setpoints",
+    [{"wine2_set_temp": 45}, {"wine_set_temp": None, "wine2_set_temp": 45}, {"ref2_set_temp": 38}],
+)
+async def test_modes_need_a_primary_setpoint(hass, controls, setpoints):
+    snapshot = {"appliance_model": "FUTURE-MODEL", **setpoints, "sabbath_on": False}
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").state == "unavailable"
 
 
 @pytest.mark.parametrize(
