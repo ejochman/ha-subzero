@@ -47,6 +47,7 @@ from .controls import (
     appliance_datetime,
     appliance_type,
     control_matches,
+    excluded_properties,
     ice_mode,
     ice_mode_properties,
     is_dishwasher,
@@ -388,10 +389,12 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
                 model = self._read_updates.get("appliance_model")
                 if isinstance(model, str) and model and model != data.get("appliance_model"):
                     data = {}
-                return {
+                data = {
                     **{key: value for key, value in data.items() if key in STATE_KEYS},
                     **self._read_updates,
                 }
+                excluded = excluded_properties(data)
+                return {key: value for key, value in data.items() if key not in excluded}
             except InvalidAuth as error:
                 raise ConfigEntryAuthFailed(str(error)) from error
             except RateLimited as error:
@@ -462,6 +465,8 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
             or properties.get("appliance_model") != self.data.get("appliance_model")
         )
         updated = properties if replace else {**self.data, **properties}
+        excluded = excluded_properties(updated)
+        updated = {key: value for key, value in updated.items() if key not in excluded}
         if (
             update.full
             or updated != self.data

@@ -33,7 +33,7 @@ For manual installation, copy `custom_components/subzero` into your Home Assista
 
 ## Entities
 
-Entities are created only for recognized properties that each appliance reports, at setup and as new properties appear in push updates. There is no model allowlist.
+Entities are created only for recognized properties that each appliance reports, at setup and as new properties appear in push updates. There is no model allowlist. Properties the Sub-Zero app ignores for a specific appliance type, such as the accent light on some refrigerators, are ignored here too, and entities that earlier versions created for them are removed.
 
 Celsius and Fahrenheit appliance settings are supported. Home Assistant displays temperatures and accepts setpoints in your preferred unit. Setpoints use whole-degree Fahrenheit precision, so Celsius requests may be rounded. Appliance units are read at startup and on reload, falling back to the last saved unit if the appliance list is temporarily unavailable. Appliances with unknown units keep all of their non-temperature entities.
 

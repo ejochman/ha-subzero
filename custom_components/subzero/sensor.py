@@ -298,9 +298,8 @@ async def async_setup_entry(
             ),
         ),
         SubZeroIceStatusSensor,
-        lambda coordinator, description: (
-            is_ice_maker(coordinator.data) and "ice_maker_on" in coordinator.data
-        ),
+        # The app shows a dedicated ice maker's status whatever it reports.
+        lambda coordinator, description: is_ice_maker(coordinator.data),
     )
 
 

@@ -11,6 +11,7 @@ from .const import (
     DISHWASHER_MODES,
     DISHWASHER_SWITCHES,
     DOOR_AJAR_TIMEOUTS,
+    EXCLUDED_PROPERTIES,
     FRIDGE_ENUM_OPTIONS,
     FRIDGE_MODE_KEYS,
     HOOD_BOOLEAN_KEYS,
@@ -60,6 +61,12 @@ def is_ice_maker(data: dict) -> bool:
 def is_hood(data: dict) -> bool:
     parts = appliance_type(data)
     return parts is not None and parts[1] == 23
+
+
+def excluded_properties(data: dict) -> set[str]:
+    """Properties the app discards for the reported appliance type."""
+    parts = appliance_type(data)
+    return EXCLUDED_PROPERTIES.get(parts[1:], set()) if parts is not None else set()
 
 
 def accent_light_options(data: dict) -> dict[str, int]:

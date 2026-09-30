@@ -15,6 +15,7 @@ from .api import SubZeroClient
 from .app_config import SUBSCRIPTION_KEY
 from .auth import InvalidAuth
 from .const import DISHWASHER_SWITCHES, DOMAIN
+from .controls import excluded_properties
 from .coordinator import SubZeroAccount, SubZeroCoordinator, selected_devices
 from .services import async_setup_services
 
@@ -32,6 +33,12 @@ PLATFORMS = [
 ]
 type SubZeroConfigEntry = ConfigEntry[SubZeroAccount]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+# Entities built on a property the app discards, besides the property's own entity.
+EXCLUDED_ENTITY_KEYS = {
+    "air_filter_pct_remaining": ("reset_air_filter",),
+    "ice_maker_on": ("ice_maker_mode",),
+    "kitchen_timer2_active": ("kitchen_timer2_duration",),
+}
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -69,6 +76,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: SubZeroConfigEntry) -> b
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         if not device.identifiers.intersection(identifiers):
             registry.async_remove_device(device.id)
+    # Entities left from earlier versions for properties the app discards.
+    excluded = {
+        f"{coordinator.device_id}_{key}"
+        for coordinator in account.coordinators.values()
+        for prop in excluded_properties(coordinator.data)
+        for key in (prop, *EXCLUDED_ENTITY_KEYS.get(prop, ()))
+    }
+    entities = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
+        if entity.unique_id in excluded:
+            entities.async_remove(entity.entity_id)
     return True
 
 

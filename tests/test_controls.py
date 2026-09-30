@@ -652,8 +652,9 @@ ALL_MODES = ["Normal", "Sabbath", "High use", "Short vacation", "Long vacation"]
 @pytest.mark.parametrize(
     ("type_id", "options"),
     [
-        ("1.14.1.0", ALL_MODES),
+        ("1.5.2.0", ALL_MODES),
         ("1.5.1.0", ["Normal", "Sabbath"]),
+        ("1.14.1.0", ["Normal", "Sabbath"]),
         ("1.18.4.0", ["Normal", "Sabbath"]),
     ],
 )
@@ -679,6 +680,26 @@ async def test_wine_storage_offers_the_modes_the_app_shows(hass, controls, type_
     )
     controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
     assert hass.states.get("select.kitchen_mode").state == "Sabbath"
+
+
+async def test_an_active_discarded_mode_is_not_shown_or_cleared(hass, controls):
+    snapshot = {
+        "appliance_model": "DEU2450WDZ",
+        "appliance_type": "1.5.1.0",
+        "wine_set_temp": 55,
+        "sabbath_on": False,
+        "high_use_on": True,
+    }
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").state == "Normal"
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.kitchen_mode", "option": "Sabbath"},
+        blocking=True,
+    )
+    controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
 
 
 async def test_modes_reported_as_null_are_left_out(hass, controls):

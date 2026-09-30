@@ -60,10 +60,45 @@ NOTIFICATION_TYPES = {
 SETPOINT_KEYS = {"ref_set_temp", "ref2_set_temp", "frz_set_temp", "crisp_set_temp"}
 WINE_SETPOINT_KEYS = {"wine_set_temp", "wine2_set_temp"}
 FRIDGE_MODE_KEYS = ("sabbath_on", "high_use_on", "short_vacation_on", "long_vacation_on")
-# Operating modes the app hides by appliance type (series, category, version).
-EXCLUDED_MODES = {
-    (5, 1, 0): {"high_use_on", "short_vacation_on", "long_vacation_on"},
-    (18, 4, 0): {"high_use_on", "short_vacation_on", "long_vacation_on"},
+_WINE_MODES = {"high_use_on", "short_vacation_on", "long_vacation_on"}
+# Properties the app discards from appliance data, by appliance type (series, category, version).
+EXCLUDED_PROPERTIES = {
+    **dict.fromkeys(
+        [
+            *((1, 1, version) for version in (0, 2, 4, 12)),
+            *((1, 2, version) for version in (0, 3, 4)),
+            (1, 3, 0),
+            (1, 3, 4),
+            (1, 4, 0),
+            *((2, 1, version) for version in (0, 1, 3)),
+            (2, 2, 1),
+            (2, 2, 3),
+            (2, 3, 0),
+            (2, 4, 1),
+            (2, 4, 3),
+            (2, 5, 0),
+            (2, 6, 0),
+            (2, 7, 1),
+            (2, 7, 2),
+            (2, 8, 0),
+            (2, 9, 0),
+            (11, 1, 3),
+            *((13, category, 0) for category in range(1, 6)),
+        ],
+        {"accent_light_level"},
+    ),
+    **dict.fromkeys([(2, 6, 1), (2, 8, 1), (2, 9, 1)], {"accent_light_level", "ice_maker_on"}),
+    **dict.fromkeys([(3, 1, 1), (3, 1, 2), (3, 2, 2)], {"kitchen_timer2_active"}),
+    (3, 2, 1): {"cav2_probe_on", "kitchen_timer2_active"},
+    **dict.fromkeys(
+        [(5, 1, 0), (12, 1, 0), (14, 1, 0), (14, 2, 0), (14, 3, 0), (18, 1, 0), (18, 3, 0)],
+        _WINE_MODES,
+    ),
+    (5, 4, 0): {"air_filter_pct_remaining"},
+    (6, 1, 0): {"softener_low"},
+    (15, 2, 4): {"cav2_probe_on"},
+    (15, 2, 5): {"cav2_probe_on"},
+    (18, 4, 0): {"air_filter_pct_remaining", *_WINE_MODES},
 }
 ICE_KEYS = ("ice_maker_on", "max_ice_on", "night_ice_on")
 ICE_MODES = {"Max ice": "max_ice_on", "Night ice": "night_ice_on"}

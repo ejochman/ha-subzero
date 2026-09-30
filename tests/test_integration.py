@@ -1298,3 +1298,85 @@ async def test_push_discovers_all_platforms_for_each_appliance(hass, oven_loaded
     assert hass.states.get("number.kitchen_freezer_setpoint").state == "0"
     assert hass.states.get("sensor.kitchen_freezer_setpoint").state == "0"
     assert {entity_id: registry.async_get(entity_id).id for entity_id in expected} == original
+
+
+DISCARDING_FRIDGE = {
+    "appliance_model": "BI-36UFD",
+    "appliance_type": "1.2.6.1",
+    "ref_set_temp": 38,
+    "frz_set_temp": 0,
+    "ice_maker_on": True,
+    "max_ice_on": False,
+    "night_ice_on": False,
+    "accent_light_level": 100,
+    "sabbath_on": False,
+}
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
+async def test_properties_the_app_discards_are_ignored(hass, cloud_appliance):
+    for update, full in (
+        (None, False),
+        ({"ice_maker_on": False, "accent_light_level": 110}, False),
+        (DISCARDING_FRIDGE, True),
+    ):
+        if update is not None:
+            await cloud_appliance.update(update, full=full)
+        data = cloud_appliance.coordinator.data
+        assert "ice_maker_on" not in data
+        assert "accent_light_level" not in data
+        assert data["max_ice_on"] is False
+    await cloud_appliance.coordinator.async_refresh()
+    assert "ice_maker_on" not in cloud_appliance.coordinator.data
+    for entity_id in (
+        "select.kitchen_accent_light",
+        "select.kitchen_ice_maker",
+        "binary_sensor.kitchen_ice_maker_enabled",
+    ):
+        assert hass.states.get(entity_id) is None
+
+
+@pytest.mark.parametrize(
+    "cloud_appliance",
+    [{key: value for key, value in DISCARDING_FRIDGE.items() if key != "appliance_type"}],
+    indirect=True,
+)
+async def test_a_reported_type_discards_stored_properties(hass, cloud_appliance):
+    assert hass.states.get("select.kitchen_accent_light").state == "On"
+    assert hass.states.get("select.kitchen_ice_maker").state == "On"
+    await cloud_appliance.update({"appliance_type": "1.2.6.1"})
+    assert "accent_light_level" not in cloud_appliance.coordinator.data
+    assert hass.states.get("select.kitchen_accent_light").state == "unavailable"
+    assert hass.states.get("select.kitchen_ice_maker").state == "unavailable"
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
+async def test_upgrade_removes_entities_for_discarded_properties(hass, cloud_appliance):
+    entry = cloud_appliance.entry
+    registry = er.async_get(hass)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    stale = [
+        registry.async_get_or_create(domain, DOMAIN, f"appliance_{key}", config_entry=entry)
+        for domain, key in (
+            ("select", "accent_light_level"),
+            ("select", "ice_maker_mode"),
+            ("binary_sensor", "ice_maker_on"),
+        )
+    ]
+    kept = registry.async_get_entity_id("binary_sensor", DOMAIN, "appliance_max_ice_on")
+    assert kept is not None
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert all(registry.async_get(entity.entity_id) is None for entity in stale)
+    assert registry.async_get(kept) is not None
+    assert hass.states.get(kept).state == "off"
+
+
+@pytest.mark.parametrize(
+    "cloud_appliance",
+    [{"appliance_model": "DEC1850CI", "appliance_type": "1.21.2.5", "winterize_on": True}],
+    indirect=True,
+)
+async def test_ice_status_appears_without_reported_ice_power(hass, cloud_appliance):
+    assert hass.states.get("sensor.kitchen_ice_maker_status").state == "Off"
