@@ -74,9 +74,7 @@ def excluded_entity_keys(data: dict) -> set[str]:
     """Entities the app does not show because of a discarded property."""
     discarded = excluded_properties(data)
     keys = {key for prop in discarded for key in (prop, *DEPENDENT_ENTITY_KEYS.get(prop, ()))}
-    if discarded.intersection(FRIDGE_MODE_KEYS) and all(
-        data.get(key) is None for key in FRIDGE_MODE_KEYS
-    ):
+    if discarded.intersection(FRIDGE_MODE_KEYS) and data.keys().isdisjoint(FRIDGE_MODE_KEYS):
         keys.add("operating_mode")
     return keys
 

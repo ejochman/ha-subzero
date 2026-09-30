@@ -448,6 +448,9 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
     def apply_update(self, update: StateUpdate) -> None:
         self.unrecognized_keys.update(update.properties.keys() - STATE_KEYS)
         properties = {key: value for key, value in update.properties.items() if key in STATE_KEYS}
+        if "appliance_type" in properties and appliance_type(properties) is None:
+            # Like the app, an unusable type does not replace the known one.
+            del properties["appliance_type"]
         if "notifs" in properties:
             properties["notifs"] = notification_records(properties)
             self._process_events(properties, history=update.full)

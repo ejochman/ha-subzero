@@ -1417,6 +1417,7 @@ async def test_a_response_without_a_type_keeps_the_known_type(hass, cloud_applia
     [
         ({**DISCARDING_WINE, "high_use_on": False}, True),
         ({**DISCARDING_WINE, "high_use_on": False, "sabbath_on": False}, False),
+        ({**DISCARDING_WINE, "high_use_on": False, "sabbath_on": None}, False),
     ],
     indirect=["cloud_appliance"],
 )
@@ -1474,3 +1475,29 @@ async def test_a_discarded_probe_hides_its_entities(hass, cloud_appliance):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert all(registry.async_get(entity.entity_id) is None for entity in stale)
+
+
+@pytest.mark.parametrize(
+    "cloud_appliance", [{**DISCARDING_FRIDGE, "appliance_type": "1.2.6.0"}], indirect=True
+)
+@pytest.mark.parametrize("pushed", [None, "bad", 7])
+async def test_an_unusable_pushed_type_does_not_override_a_read(hass, cloud_appliance, pushed):
+    coordinator = cloud_appliance.coordinator
+    assert coordinator.data["ice_maker_on"] is True
+    reading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_state(device_id):
+        reading.set()
+        await release.wait()
+        return {**DISCARDING_FRIDGE, "appliance_type": "1.2.6.1"}
+
+    cloud_appliance.client.state.side_effect = slow_state
+    refresh = hass.async_create_task(coordinator.async_refresh())
+    await reading.wait()
+    coordinator.apply_update(StateUpdate({"appliance_type": pushed}, full=False))
+    assert coordinator.data["appliance_type"] == "1.2.6.0"
+    release.set()
+    await refresh
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "ice_maker_on" not in coordinator.data
