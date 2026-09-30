@@ -1311,6 +1311,11 @@ DISCARDING_FRIDGE = {
     "accent_light_level": 100,
     "sabbath_on": False,
 }
+DISCARDING_WINE = {
+    "appliance_model": "DEU2450WDZ",
+    "appliance_type": "1.14.1.0",
+    "wine_set_temp": 55,
+}
 
 
 @pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
@@ -1380,3 +1385,40 @@ async def test_upgrade_removes_entities_for_discarded_properties(hass, cloud_app
 )
 async def test_ice_status_appears_without_reported_ice_power(hass, cloud_appliance):
     assert hass.states.get("sensor.kitchen_ice_maker_status").state == "Off"
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
+async def test_a_response_without_a_type_keeps_the_known_type(hass, cloud_appliance):
+    coordinator = cloud_appliance.coordinator
+    cloud_appliance.state.pop("appliance_type")
+    await coordinator.async_refresh()
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "ice_maker_on" not in coordinator.data
+    coordinator.async_set_update_error(ApiError("Offline"))
+    untyped = {key: value for key, value in DISCARDING_FRIDGE.items() if key != "appliance_type"}
+    await cloud_appliance.update(untyped, full=True)
+    assert coordinator.last_update_success
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "accent_light_level" not in coordinator.data
+    assert hass.states.get("select.kitchen_accent_light") is None
+
+
+@pytest.mark.parametrize(
+    ("cloud_appliance", "removed"),
+    [
+        ({**DISCARDING_WINE, "high_use_on": False}, True),
+        ({**DISCARDING_WINE, "high_use_on": False, "sabbath_on": False}, False),
+    ],
+    indirect=["cloud_appliance"],
+)
+async def test_upgrade_removes_a_mode_select_left_without_modes(hass, cloud_appliance, removed):
+    entry = cloud_appliance.entry
+    registry = er.async_get(hass)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    mode = registry.async_get_or_create(
+        "select", DOMAIN, "appliance_operating_mode", config_entry=entry
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert (registry.async_get(mode.entity_id) is None) is removed

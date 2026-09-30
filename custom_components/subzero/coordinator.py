@@ -393,8 +393,7 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
                     **{key: value for key, value in data.items() if key in STATE_KEYS},
                     **self._read_updates,
                 }
-                excluded = excluded_properties(data)
-                return {key: value for key, value in data.items() if key not in excluded}
+                return self._discard_excluded(data)
             except InvalidAuth as error:
                 raise ConfigEntryAuthFailed(str(error)) from error
             except RateLimited as error:
@@ -404,6 +403,21 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
             finally:
                 self._read_updates = None
                 self._read_error = None
+
+    def _discard_excluded(self, data: dict) -> dict:
+        """Drop the properties the app discards for the appliance type.
+
+        Like the app, a response without a type keeps the type already known
+        for the same appliance model.
+        """
+        if (
+            "appliance_type" not in data
+            and "appliance_type" in self.data
+            and data.get("appliance_model") == self.data.get("appliance_model")
+        ):
+            data = {**data, "appliance_type": self.data["appliance_type"]}
+        excluded = excluded_properties(data)
+        return {key: value for key, value in data.items() if key not in excluded}
 
     async def async_recover(self) -> None:
         """Restore unavailable state while the appliance is reporting again."""
@@ -464,9 +478,7 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
             not self.last_update_success
             or properties.get("appliance_model") != self.data.get("appliance_model")
         )
-        updated = properties if replace else {**self.data, **properties}
-        excluded = excluded_properties(updated)
-        updated = {key: value for key, value in updated.items() if key not in excluded}
+        updated = self._discard_excluded(properties if replace else {**self.data, **properties})
         if (
             update.full
             or updated != self.data
