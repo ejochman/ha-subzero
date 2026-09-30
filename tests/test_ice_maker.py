@@ -72,6 +72,21 @@ async def test_ice_controls_and_cleaning_updates(hass, cloud_appliance):
             await cloud_appliance.coordinator.async_set_properties({key: True})
 
 
+@pytest.mark.parametrize(
+    ("update", "status"),
+    [
+        ({"winterize_on": True}, "Off"),
+        ({"winterize_on": True, "delay_active": True}, "Delayed"),
+        ({"winterize_on": True, "failsafe_on": True}, "Disabled"),
+        ({"delay_active": True, "failsafe_on": True}, "Disabled"),
+        ({"ice_maker_on": False, "winterize_on": False}, "Off"),
+    ],
+)
+async def test_ice_status_follows_the_app_order(hass, cloud_appliance, update, status):
+    await cloud_appliance.update(update)
+    assert hass.states.get("sensor.kitchen_ice_maker_status").state == status
+
+
 async def test_schedule_ice_delay_converts_units_and_refreshes(hass, cloud_appliance):
     await hass.services.async_call(
         DOMAIN,
