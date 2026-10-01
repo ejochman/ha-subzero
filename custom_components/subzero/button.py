@@ -14,6 +14,7 @@ from .controls import (
     supports_air_filter_reset,
     supports_control,
     validate_remote_start,
+    wash_cancel_enabled,
 )
 from .coordinator import SubZeroCoordinator
 from .entity import SubZeroEntity, async_setup_entities
@@ -109,11 +110,13 @@ class SubZeroCancelWashButton(SubZeroEntity, ButtonEntity):
         return (
             self.coordinator.last_update_success
             and supports_control(self.coordinator.data, "wash_cycle_on")
-            and self.coordinator.data.get("wash_cycle_on") is True
+            and wash_cancel_enabled(self.coordinator.data)
         )
 
     async def async_press(self) -> None:
-        await self.coordinator.async_set_properties({"wash_cycle_on": False})
+        # Like the app, cancel even when the cycle already reports off, as it may
+        # during a delayed start.
+        await self.coordinator.async_set_properties({"wash_cycle_on": False}, force=True)
 
 
 class SubZeroAirFilterResetButton(SubZeroEntity, ButtonEntity):

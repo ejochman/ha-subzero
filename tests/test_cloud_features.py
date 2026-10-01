@@ -171,6 +171,8 @@ async def appliances(hass, tokens, request, unit_system):
                 properties[key.replace("unit_on", "remote_ready")] = False
             if key == "wash_cycle_on" and value:
                 properties.update(remote_ready=False, wash_status=2)
+            elif key == "wash_cycle_on":
+                properties["wash_status"] = 4
         states[device_id].update(properties)
         if behavior["push"]:
             await updates.put((device_id, StateUpdate(properties, full=False)))
@@ -902,6 +904,19 @@ async def test_dishwasher_cancel_needs_confirmation_but_not_remote_ready(hass, a
     assert appliances.client.set_property.await_args_list == [
         call("dishwasher", "wash_cycle_on", False)
     ] * (1 if accept else 3)
+
+
+async def test_dishwasher_cancel_follows_wash_status(hass, appliances):
+    entity_id = "button.dishwasher_cancel_wash_cycle"
+    for status in (0, 6):
+        await appliances.update("dishwasher", {"wash_cycle_on": False, "wash_status": status})
+        assert hass.states.get(entity_id).state == "unavailable"
+    await appliances.update("dishwasher", {"wash_cycle_on": False, "wash_status": 7})
+    assert hass.states.get(entity_id).state != "unavailable"
+    await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    appliances.client.set_property.assert_awaited_once_with("dishwasher", "wash_cycle_on", False)
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "unavailable"
 
 
 async def test_dishwasher_modes_follow_capability_and_block_start_in_sabbath(hass, appliances):

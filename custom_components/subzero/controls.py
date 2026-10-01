@@ -114,6 +114,12 @@ def wash_settings_enabled(data: dict) -> bool:
     return type(data.get("wash_status")) is int and data["wash_status"] in {0, 1}
 
 
+def wash_cancel_enabled(data: dict) -> bool:
+    # The app offers cancel while a cycle runs, dries, or waits for a delayed start.
+    status = data.get("wash_status")
+    return data.get("wash_cycle_on") is True or (type(status) is int and status in {2, 5, 7})
+
+
 def supports_control(data: dict, key: str) -> bool:
     if key in KITCHEN_TIMERS:
         prefix = KITCHEN_TIMERS[key]
