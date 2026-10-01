@@ -206,7 +206,11 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
                 requested_at[key] = dt_util.utcnow()
                 if (
                     force
-                    or (key in KITCHEN_TIMERS and value > 0)
+                    or (
+                        key in KITCHEN_TIMERS
+                        # Setting a finished timer to 0 clears it, as the app does.
+                        and (value > 0 or self.data.get(f"{KITCHEN_TIMERS[key]}_complete") is True)
+                    )
                     or not control_matches(self.data, key, value, requested_at[key])
                 ):
                     requested_at[key] = await self._async_set_property(

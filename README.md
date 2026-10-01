@@ -117,7 +117,7 @@ Controls include:
 - A cooking-mode selector and an interior-light switch for each cavity. Selecting Off turns that cavity off.
 - A Start oven button for each cavity, available only when the oven reports Remote Ready and a supported cooking mode and temperature are configured. Starting sends the same writes as the app: E series and M series receive the power command alone, and every other series receives the cooking mode, power, and setpoint in that order.
 - A probe target control for each reported probe, from 120–210°F. Connect the probe and have the cavity running or in Remote Ready to adjust it.
-- Two kitchen-timer duration controls, from 0 to 719 minutes. Setting a duration starts or restarts that timer; 0 cancels it. The number shows the configured duration when reported start/end times permit it. End-time sensors can drive countdown dashboards.
+- Two kitchen-timer duration controls, from 0 to 719 minutes. Setting a duration starts or restarts that timer; 0 cancels it or clears a finished timer. The number shows the configured duration when reported start/end times permit it. End-time sensors can drive countdown dashboards.
 
 Enable **Remote Ready at the oven before each remote start**. Opening a door cancels it. Broil, Convection broil, Proof, Self clean, and Gourmet must be started at the appliance. Those restrictions also apply to automations. See [Wolf's Remote Ready guide](https://www.subzero-wolf.com/assistance/answers/wolf/m-series-oven/sub-zero-group-owners-app---set-up-remote-access).
 

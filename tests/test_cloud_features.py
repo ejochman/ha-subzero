@@ -791,6 +791,22 @@ async def test_timer_duration_is_confirmed_from_timer_state(hass, appliances, ke
     assert appliances.client.state.await_count == reads + (0 if push else 4)
 
 
+@pytest.mark.parametrize(
+    ("prefix", "entity_id"),
+    [
+        ("kitchen_timer", "number.oven_kitchen_timer_duration"),
+        ("kitchen_timer2", "number.oven_kitchen_timer_2_duration"),
+    ],
+)
+async def test_zero_clears_a_finished_timer(hass, appliances, prefix, entity_id):
+    await appliances.update("oven", {f"{prefix}_active": False, f"{prefix}_complete": True})
+    assert hass.states.get(entity_id).state == "0"
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": entity_id, "value": 0}, blocking=True
+    )
+    appliances.client.set_property.assert_awaited_once_with("oven", f"{prefix}_duration", 0)
+
+
 @pytest.mark.parametrize("previous_minutes", [16, 45])
 async def test_timer_ack_without_correct_end_time_is_not_success(
     hass, appliances, previous_minutes
