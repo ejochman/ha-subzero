@@ -123,7 +123,7 @@ Enable **Remote Ready at the oven before each remote start**. Opening a door can
 
 Oven temperature fields that report zero while idle show as unknown; probe readings also show as unknown when the probe is not in use. Unknown cooking-mode codes show as unknown and cannot be selected.
 
-Gourmet program sensors report the appliance's recipe code as a name. Code 0 shows None; unrecognized codes show as unknown. Select and start Gourmet programs at the oven.
+Gourmet program sensors report the appliance's recipe code as a name. Code 0 shows None, and so does a cavity that reports Gourmet mode off; unrecognized codes show as unknown. Select and start Gourmet programs at the oven.
 
 ## Wolf hoods
 

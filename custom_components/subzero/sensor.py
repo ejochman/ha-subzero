@@ -320,6 +320,12 @@ class SubZeroSensor(SubZeroEntity, SensorEntity):
         value = self.coordinator.data.get(key)
         if self.entity_description.device_class == SensorDeviceClass.TIMESTAMP:
             return appliance_datetime(value, self.coordinator.data)
+        if (
+            key.endswith("_gourmet_recipe")
+            and self.coordinator.data.get(key.replace("recipe", "mode_on")) is False
+        ):
+            # The app shows the Gourmet program only while Gourmet mode is on.
+            return GOURMET_RECIPES[0]
         if key in ENUM_VALUES:
             return ENUM_VALUES[key].get(value) if type(value) is int else None
         if key in NETWORK_KEYS:

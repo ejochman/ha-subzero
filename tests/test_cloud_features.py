@@ -1025,6 +1025,12 @@ async def test_gourmet_programs_are_discovered_from_reported_recipe_codes(hass, 
     assert hass.states.get(upper).state == "Baked potato"
     assert hass.states.get(lower).state == "Fresh pizza"
 
+    await appliances.update("oven", {"cav_gourmet_mode_on": False})
+    assert hass.states.get(upper).state == "None"
+    assert hass.states.get(lower).state == "Fresh pizza"
+    await appliances.update("oven", {"cav_gourmet_mode_on": True})
+    assert hass.states.get(upper).state == "Baked potato"
+
     await appliances.update("oven", {"cav_gourmet_recipe": 0, "cav2_gourmet_recipe": 79})
     assert hass.states.get(upper).state == "None"
     assert hass.states.get(lower).state == "Lasagna, 3 racks"
