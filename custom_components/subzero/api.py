@@ -233,6 +233,31 @@ def _check_control_response(response: dict, message: str) -> None:
         raise ApiError(message)
 
 
+def validate_ice_delay(duration: int, start_offset: int, recurring: bool) -> None:
+    if (
+        type(duration) is not int
+        or duration not in range(0, 43201, 3600)
+        or type(start_offset) is not int
+        or not 0 <= start_offset < 86400
+        or type(recurring) is not bool
+    ):
+        raise ValueError("Enter a delay of 1 to 12 hours within the next day.")
+
+
+def notification_records(properties: dict) -> list[dict]:
+    records = [properties] if "notif_seq" in properties else properties.get("notifs")
+    if not isinstance(records, list):
+        return []
+    return [
+        {key: record[key] for key in ("notif_seq", "notif_type", "timestamp")}
+        for record in records
+        if isinstance(record, dict)
+        and type(record.get("notif_seq")) is int
+        and type(record.get("notif_type")) is int
+        and isinstance(record.get("timestamp"), str)
+    ]
+
+
 def parse_notification(
     event: dict, user_id: str, device_ids: list[str]
 ) -> tuple[str, StateUpdate | None] | None:
@@ -284,6 +309,14 @@ def parse_notification(
         wrapper,
         sorted(properties),
     )
+    if "notif_seq" in properties:
+        records = notification_records(properties)
+        properties = {
+            key: value
+            for key, value in properties.items()
+            if key not in {"notif_seq", "notif_type", "timestamp"}
+        }
+        properties["notifs"] = records
     if not properties or (wrapper == "root" and properties.keys().isdisjoint(STATE_KEYS)):
         return device_id, None
     model = properties.get("appliance_model")
@@ -459,7 +492,7 @@ class SubZeroClient:
         return appliances
 
     async def _command(self, device_id: str, command: str, params: dict | None = None) -> dict:
-        if command not in {"get", "open_cloud_async", "set", "reset_air_filter"}:
+        if command not in {"get", "open_cloud_async", "set", "reset_air_filter", "exit_delay"}:
             raise ValueError("Unsupported appliance command")
         payload = {"cmd": command}
         if params is not None:
@@ -502,6 +535,29 @@ class SubZeroClient:
     async def reset_air_filter(self, device_id: str) -> None:
         response = await self._command(device_id, "reset_air_filter")
         _check_control_response(response, "Sub-Zero rejected the air filter reset.")
+
+    async def set_ice_delay(
+        self, device_id: str, duration: int, start_offset: int = 0, recurring: bool = False
+    ) -> None:
+        validate_ice_delay(duration, start_offset, recurring)
+        properties = {"delay_duration": duration}
+        if duration:
+            properties = {
+                **({"delay_start_offset": start_offset} if start_offset else {}),
+                **properties,
+                "delay_recurring": recurring,
+            }
+        response = await self._command(device_id, "set", properties)
+        _check_control_response(response, "Sub-Zero rejected the ice delay.")
+
+    async def exit_ice_delay(self, device_id: str) -> dict:
+        response = await self._command(device_id, "exit_delay")
+        if _rejected(response):
+            raise ApiError("Sub-Zero rejected ending the ice delay.")
+        properties = _object(response.get("resp", response))
+        if _rejected(properties):
+            raise ApiError("Sub-Zero rejected ending the ice delay.")
+        return properties
 
     async def appliance_faults(self, device_id: str) -> list[ApplianceFault]:
         path = "/fault-notifications/v1/notifications/device/" + quote(device_id, safe="")

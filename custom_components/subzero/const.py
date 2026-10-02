@@ -1,14 +1,162 @@
 """Integration settings and recognized appliance properties."""
 
 DOMAIN = "subzero"
-CONTROL_CONFIRM_TIMEOUT = 5
+CONTROL_CONFIRM_TIMEOUT = 8
+CONTROL_PUSH_TIMEOUT = 5
 RECONNECT_DELAY = 30
 MAX_RECONNECT_DELAY = 900
+MAX_EVENT_HISTORY = 256
+NOTIFICATION_TYPES = {
+    0: "unknown",
+    101: "refrigerator_door_ajar",
+    102: "freezer_door_ajar",
+    103: "wine_door_ajar",
+    104: "wine_setpoint_changed",
+    105: "refrigerator_service_required",
+    106: "refrigerator_setpoint_changed",
+    107: "freezer_setpoint_changed",
+    108: "water_filter_expired",
+    109: "air_filter_expired",
+    112: "wine_temperature_alert",
+    113: "ice_maker_door_ajar",
+    114: "ice_cleaning_required",
+    115: "ice_cleaning_due_soon",
+    116: "ice_cleaning_add_descaler",
+    117: "ice_cleaning_add_sanitizer",
+    118: "ice_cleaning_cancelled",
+    119: "ice_cleaning_complete",
+    201: "oven_preheated",
+    202: "lower_oven_preheated",
+    203: "oven_probe_connected",
+    204: "lower_oven_probe_connected",
+    205: "oven_probe_target_reached",
+    206: "lower_oven_probe_target_reached",
+    207: "kitchen_timer_complete",
+    208: "kitchen_timer_2_complete",
+    209: "kitchen_timer_under_one_minute",
+    210: "kitchen_timer_2_under_one_minute",
+    211: "oven_cooking_timer_complete",
+    212: "lower_oven_cooking_timer_complete",
+    213: "oven_cooking_timer_under_one_minute",
+    214: "lower_oven_cooking_timer_under_one_minute",
+    215: "oven_probe_within_ten_degrees",
+    216: "lower_oven_probe_within_ten_degrees",
+    217: "oven_service_required",
+    218: "oven_door_ajar",
+    219: "lower_oven_door_ajar",
+    220: "oven_self_clean_complete",
+    221: "lower_oven_self_clean_complete",
+    301: "dishwasher_started",
+    302: "dishwasher_complete",
+    303: "softener_salt_low",
+    304: "rinse_aid_low",
+    305: "dishwasher_service_required",
+    306: "dishwasher_paused",
+    307: "dishwasher_cancelled",
+    400: "fault_notification",
+    401: "feedback_notification",
+}
 
 SETPOINT_KEYS = {"ref_set_temp", "ref2_set_temp", "frz_set_temp", "crisp_set_temp"}
 WINE_SETPOINT_KEYS = {"wine_set_temp", "wine2_set_temp"}
 FRIDGE_MODE_KEYS = ("sabbath_on", "high_use_on", "short_vacation_on", "long_vacation_on")
+_WINE_MODES = {"high_use_on", "short_vacation_on", "long_vacation_on"}
+# Properties the app discards from appliance data, by appliance type (series, category, version).
+EXCLUDED_PROPERTIES = {
+    **dict.fromkeys(
+        [
+            *((1, 1, version) for version in (0, 2, 4, 12)),
+            *((1, 2, version) for version in (0, 3, 4)),
+            (1, 3, 0),
+            (1, 3, 4),
+            (1, 4, 0),
+            *((2, 1, version) for version in (0, 1, 3)),
+            (2, 2, 1),
+            (2, 2, 3),
+            (2, 3, 0),
+            (2, 4, 1),
+            (2, 4, 3),
+            (2, 5, 0),
+            (2, 6, 0),
+            (2, 7, 1),
+            (2, 7, 2),
+            (2, 8, 0),
+            (2, 9, 0),
+            (11, 1, 3),
+            *((13, category, 0) for category in range(1, 6)),
+        ],
+        {"accent_light_level"},
+    ),
+    **dict.fromkeys([(2, 6, 1), (2, 8, 1), (2, 9, 1)], {"accent_light_level", "ice_maker_on"}),
+    **dict.fromkeys([(3, 1, 1), (3, 1, 2), (3, 2, 2)], {"kitchen_timer2_active"}),
+    (3, 2, 1): {"cav2_probe_on", "kitchen_timer2_active"},
+    **dict.fromkeys(
+        [(5, 1, 0), (12, 1, 0), (14, 1, 0), (14, 2, 0), (14, 3, 0), (18, 1, 0), (18, 3, 0)],
+        _WINE_MODES,
+    ),
+    (5, 4, 0): {"air_filter_pct_remaining"},
+    (6, 1, 0): {"softener_low"},
+    (15, 2, 4): {"cav2_probe_on"},
+    (15, 2, 5): {"cav2_probe_on"},
+    (18, 4, 0): {"air_filter_pct_remaining", *_WINE_MODES},
+}
+# Entities the app hides with a discarded property, besides the property's own.
+DEPENDENT_ENTITY_KEYS = {
+    "air_filter_pct_remaining": ("reset_air_filter",),
+    "cav2_probe_on": ("cav2_probe_at_set_temp", "cav2_probe_set_temp", "cav2_probe_temp"),
+    "high_use_on": ("high_use_start_time", "high_use_end_time"),
+    "ice_maker_on": (
+        "ice_maker_mode",
+        "max_ice_on",
+        "night_ice_on",
+        "max_ice_start_time",
+        "max_ice_end_time",
+    ),
+    "kitchen_timer2_active": (
+        "kitchen_timer2_duration",
+        "kitchen_timer2_complete",
+        "kitchen_timer2_start_time",
+        "kitchen_timer2_end_time",
+        "dismiss_kitchen_timer2",
+    ),
+}
 ICE_KEYS = ("ice_maker_on", "max_ice_on", "night_ice_on")
+ICE_MODES = {"Max ice": "max_ice_on", "Night ice": "night_ice_on"}
+ICE_DELAY_KEYS = {"delay_start_offset", "delay_duration", "delay_recurring"}
+HOOD_SWITCHES = {
+    "delay_enabled": "Delayed shutoff",
+    "key_tone_on": "Button tones",
+    "user_lock_on": "Control lock",
+}
+HOOD_BOOLEAN_KEYS = {"fan_on", "light_on", *HOOD_SWITCHES}
+HOOD_INTEGER_RANGES = {
+    "fan_speed": (0, 4),
+    "light_percent": (5, 100),
+    "color_level": (0, 100),
+    "halo_max_percent": (0, 30),
+    "auto_sensivity": (-1, 2),
+    "delay_off_duration": (0, 719 * 60000),
+}
+HOOD_SENSITIVITY = {"Off": -1, "Low": 0, "Medium": 1, "High": 2}
+ICE_CLEAN_STAGES = {
+    0: "Off",
+    50: "Not cleaning",
+    51: "Empty bin",
+    52: "Manually clean",
+    53: "Add descaler",
+    60: "Descale fill",
+    61: "Descale clean",
+    62: "Descale flush",
+    63: "Descale rinse",
+    64: "Sanitize fill",
+    65: "Add sanitizer",
+    66: "Sanitize clean",
+    67: "Sanitize flush",
+    68: "Sanitize rinse",
+    73: "Cleaning reset flush",
+    74: "Cleaning reset rinse",
+    80: "Cleaning complete",
+}
 FRIDGE_ENUM_OPTIONS = {
     "crisp_temp_mode": {"Automatic": 1, "Manual": 0},
     "humidity_control": {"Normal": 1, "Enhanced": 2},
@@ -135,12 +283,8 @@ OVEN_TEMPERATURE_RANGES = {
         9: (85, 110),
         10: (110, 160),
     },
-    4: {
-        **dict.fromkeys((1, 2, 4, 5, 6), (200, 550)),
-        9: (85, 110),
-        10: (110, 170),
-        12: (140, 200),
-    },
+    # Wolf's manuals give series 4, 8 and 15 the same modes and ranges. The app files
+    # series 4 Convection under Convection bake, a mode only series 3 ovens have.
     **{
         series: {
             **dict.fromkeys((1, 2, 4, 6, 8), (200, 550)),
@@ -148,7 +292,7 @@ OVEN_TEMPERATURE_RANGES = {
             10: (110, 170),
             12: (140, 200),
         }
-        for series in (8, 15)
+        for series in (4, 8, 15)
     },
 }
 KITCHEN_TIMERS = {
@@ -192,6 +336,7 @@ WASH_STATUSES = {
 }
 
 WRITABLE_BOOLEAN_KEYS = {
+    *HOOD_BOOLEAN_KEYS,
     *FRIDGE_MODE_KEYS,
     *ICE_KEYS,
     "air_filter_on",
@@ -201,6 +346,7 @@ WRITABLE_BOOLEAN_KEYS = {
     "wash_cycle_on",
 }
 WRITABLE_INTEGER_KEYS = {
+    *HOOD_INTEGER_RANGES,
     *SETPOINT_KEYS,
     *WINE_SETPOINT_KEYS,
     *FRIDGE_ENUM_OPTIONS,
@@ -216,6 +362,8 @@ WRITABLE_INTEGER_KEYS = {
     "door_ajar_timeout",
 }
 NETWORK_KEYS = {"ipv4_addr", "device_wlan_id"}
+# Kept out of diagnostics and logs.
+PRIVATE_KEYS = {*NETWORK_KEYS, "appliance_serial"}
 FAULT_SEVERITIES = {
     0: "undefined",
     1: "low",
@@ -249,6 +397,12 @@ FAULT_METADATA_APPLIES_TO_BY_SERIES = {
     23: "pvii",
 }
 SENSOR_KEYS = {
+    "filter_count",
+    "filter_max_count",
+    "ice_maker_clean_stage",
+    "next_clean_cycles",
+    "delay_duration",
+    "delay_start_offset",
     *SETPOINT_KEYS,
     *WINE_SETPOINT_KEYS,
     "ref_display_temp",
@@ -272,6 +426,16 @@ SENSOR_KEYS = {
     *NETWORK_KEYS,
 }
 BINARY_KEYS = {
+    *HOOD_BOOLEAN_KEYS,
+    "ice_door_ajar",
+    "water_filter_inserted",
+    "delay_active",
+    "delay_recurring",
+    "failsafe_on",
+    "winterize_on",
+    "ice_maker_clean_on",
+    "clean_soon_on",
+    "clean_now_on",
     "ref_door_ajar",
     "ref2_door_ajar",
     "frz_door_ajar",
@@ -315,6 +479,9 @@ BINARY_KEYS = {
     *DISHWASHER_SWITCHES,
 }
 TIMESTAMP_KEYS = {
+    "delay_start_time",
+    "delay_end_time",
+    "next_clean_time",
     "max_ice_start_time",
     "max_ice_end_time",
     "high_use_start_time",
@@ -334,5 +501,5 @@ STATE_KEYS = (
     | BINARY_KEYS
     | TIMESTAMP_KEYS
     | WRITABLE_INTEGER_KEYS
-    | {"appliance_model", "appliance_type", "version", "time"}
+    | {"appliance_model", "appliance_serial", "appliance_type", "version", "time", "notifs"}
 )

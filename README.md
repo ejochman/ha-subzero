@@ -2,7 +2,7 @@
 
 <img src="custom_components/subzero/brand/icon.png" alt="Sub-Zero integration icon" width="80">
 
-A custom integration for connected Sub-Zero refrigerators and freezers, Wolf ovens, and Cove dishwashers, installed through HACS.
+A custom integration for connected Sub-Zero refrigerators, freezers, wine storage, and ice makers, Wolf ovens and hoods, and Cove dishwashers, installed through HACS.
 
 Sign in with your Sub-Zero Group Owner email and password directly in Home Assistant. Appliances are monitored and controlled over Sub-Zero's cloud service using their existing Wi-Fi connections. Bluetooth is not required.
 
@@ -33,9 +33,9 @@ For manual installation, copy `custom_components/subzero` into your Home Assista
 
 ## Entities
 
-Entities are created only for recognized properties that each appliance reports, at setup and as new properties appear in push updates. There is no model allowlist.
+Entities are created only for recognized properties that each appliance reports, at setup and as new properties appear in push updates. There is no model allowlist. Properties the Sub-Zero app ignores for a specific appliance type, such as the accent light on some refrigerators, are ignored here too. Entities the app hides along with them, such as a lower oven probe's readings when the probe is ignored, are not created, and entities that earlier versions created are removed.
 
-Temperature entities require the appliance to be set to Fahrenheit in the Sub-Zero app. Setpoints are sent as whole degrees Fahrenheit, and Home Assistant converts readings and inputs to your preferred display unit. Appliance units are read at startup and on reload, falling back to the last saved unit if the appliance list is temporarily unavailable. After changing the unit in the app, reload the integration. Appliances set to other units keep all of their non-temperature entities.
+Celsius and Fahrenheit appliance settings are supported. Home Assistant displays temperatures and accepts setpoints in your preferred unit. Setpoints use whole-degree Fahrenheit precision, so Celsius requests may be rounded. Appliance units are read at startup and on reload, falling back to the last saved unit if the appliance list is temporarily unavailable. Appliances with unknown units keep all of their non-temperature entities.
 
 Timestamp sensors require an explicit timezone offset, either in the timestamp or in the appliance clock, and otherwise show as unknown.
 
@@ -88,7 +88,15 @@ Ice-maker settings and operating modes report their on/off state alongside their
 
 Refrigerator temperatures on the primary tested model are **configured setpoints**. The integration does not infer a measured temperature from a setpoint. A negative water filter capacity indicates usage beyond the reported filter capacity.
 
-Wine storage units expose setpoint controls from 40–65°F, climate entities, display temperatures, and door status for each reported wine zone.
+Wine storage units expose setpoint controls from 40–65°F, climate entities, display temperatures, and door status for each reported wine zone. They also get the **Mode** control with the operating modes the app offers for their type, such as Sabbath.
+
+## Sub-Zero dedicated ice makers
+
+Dedicated ice makers provide an On/Off ice control and a door-open delay setting. Status includes Sabbath mode, the door, water filter, delay schedule, cleaning stage, next cleaning, and fault or winterization flags when reported.
+
+Use the **Sub-Zero: Schedule ice delay** action to pause production for 1–12 hours. Choose the ice maker, how many minutes from now to begin (zero starts immediately), and whether to repeat daily. The settings are sent together and the appliance status is refreshed.
+
+**End current ice delay** resumes production without removing a repeating schedule. **Cancel ice delay schedule** removes the scheduled delay. Cleaning steps must be performed at the appliance; cleaning sensors only report progress.
 
 ## Wolf ovens
 
@@ -106,16 +114,22 @@ Each reported oven cavity has its own entities. First-cavity entity IDs are pres
 Controls include:
 
 - A climate entity for each cavity, with temperature control and on/off actions. Temperature changes require the oven to be running or in Remote Ready. Known oven series use limits for the selected cooking mode, such as 85–110°F for Proof and 140–200°F for Warm. Modes without an adjustable temperature keep their on/off controls. Unrecognized series retain the 85–550°F fallback range.
-- A cooking-mode selector and an interior-light switch for each cavity. Selecting Off turns that cavity off.
+- A cooking-mode selector and an interior-light switch for each cavity. Selecting Off turns that cavity off. Each selector lists the modes the app offers for that oven and cavity, so Convection bake appears only on older E series ovens, which have no Warm mode, and some lower ovens leave out Convection, Dehydrate, or Bake stone.
 - A Start oven button for each cavity, available only when the oven reports Remote Ready and a supported cooking mode and temperature are configured. Starting sends the same writes as the app: E series and M series receive the power command alone, and every other series receives the cooking mode, power, and setpoint in that order.
 - A probe target control for each reported probe, from 120–210°F. Connect the probe and have the cavity running or in Remote Ready to adjust it.
-- Two kitchen-timer duration controls, from 0 to 719 minutes. Setting a duration starts or restarts that timer; 0 cancels it. The number shows the configured duration when reported start/end times permit it. End-time sensors can drive countdown dashboards.
+- Two kitchen-timer duration controls, from 0 to 719 minutes. Setting a duration starts or restarts that timer; 0 cancels it or clears a finished timer. A Dismiss kitchen timer button for each timer clears it once it finishes, like the app's Tap to Dismiss. The number shows the configured duration when reported start/end times permit it. End-time sensors can drive countdown dashboards.
 
 Enable **Remote Ready at the oven before each remote start**. Opening a door cancels it. Broil, Convection broil, Proof, Self clean, and Gourmet must be started at the appliance. Those restrictions also apply to automations. See [Wolf's Remote Ready guide](https://www.subzero-wolf.com/assistance/answers/wolf/m-series-oven/sub-zero-group-owners-app---set-up-remote-access).
 
 Oven temperature fields that report zero while idle show as unknown; probe readings also show as unknown when the probe is not in use. Unknown cooking-mode codes show as unknown and cannot be selected.
 
-Gourmet program sensors report the appliance's recipe code as a name. Code 0 shows None; unrecognized codes show as unknown. Select and start Gourmet programs at the oven.
+Gourmet program sensors report the appliance's recipe code as a name. Code 0 shows None, and so does a cavity that reports Gourmet mode off; unrecognized codes show as unknown. Select and start Gourmet programs at the oven.
+
+## Wolf hoods
+
+Hoods provide a fan entity with four speeds and a task-light entity with brightness and white-temperature controls, when reported. Brightness ranges from 5–100%, and white temperature from 2700–5000 K. Requests outside these ranges use the nearest limit.
+
+Other controls include halo lighting, automatic fan sensitivity (Off, Low, Medium, High), delayed shutoff with a 0–719 minute duration, button tones, and the control lock. Filter usage and allowance are reported as durations. Reset the hood filter counter at the appliance.
 
 ## Cove dishwashers
 
@@ -127,12 +141,22 @@ Gourmet program sensors report the appliance's recipe code as a name. Code 0 sho
 | Status | Door, Remote Ready, rinse aid low, softener salt low, service required |
 | Options | Heated dry, Extended dry, High temperature wash, Sanitize rinse, Top rack only |
 | Delay start | Off or 1–12 hours, active status and reported start/end times |
-| Start | Start wash cycle button, available when Remote Ready is enabled; sends the selected cycle and delay before the start command, as the app does |
-| Cancel | Cancel wash cycle button, available while a cycle is active |
+| Start | Start wash cycle button, available when Remote Ready is enabled; starts with the cycle and delay currently set on the dishwasher |
+| Cancel | Cancel wash cycle button, available while a cycle is running, drying, or waiting for a delayed start |
 
 Selecting a cycle does not start it. To enable remote starting, hold ENTER on the dishwasher for five seconds, then close the door within four seconds. Opening the door cancels Remote Ready. See [Cove's Remote Ready guide](https://www.subzero-wolf.com/assistance/answers/cove/dishwasher/cove-dishwasher-remote-ready-feature).
 
 Unknown wash cycle/status codes show as unknown. The integration sends only supported option properties; the appliance enforces which options apply to its selected cycle.
+
+## Appliance events
+
+Each appliance has an **Appliance event** entity for automations. It reports events such as oven preheat, probe targets, timer completion, dishwasher cycles, door alerts, and maintenance notifications. Its attributes include the event type, numeric code, sequence, and appliance timestamp. Unrecognized codes use the `unknown` event type and keep their numeric code.
+
+The event entity keeps its last occurrence when the connection drops. Events found during a status read are delivered immediately, including while the push connection is recovering.
+
+Startup history is not replayed. The first snapshot or status read after loading only sets a baseline, so events reported while the integration starts do not fire, even when the appliance clock runs ahead. While the integration is loaded, repeated notifications and reconnect history are deduplicated, including when the appliance resets its sequence counter. Events from before the integration loaded are ignored; events that occur while Home Assistant is stopped do not trigger automations on startup. Timestamps must include an offset or use the appliance clock's reported offset.
+
+Replay protection relies on the appliance clock. A clock five minutes behind Home Assistant can suppress the first five minutes of live events after a reload. If the clock moves backward, events can also be ignored until it catches up with the retained history cutoff.
 
 ## Diagnostics
 
@@ -146,7 +170,7 @@ Enable debug logging for `custom_components.subzero` to record channel-open atte
 
 ## Compatibility
 
-**Sub-Zero CL4850UFDID is the primary tested appliance.** Cloud status and push snapshots have also been tested with Wolf SO3050PMSP. The additional fridge features, oven controls, second-cavity support, and Cove entities are covered by automated tests using simulated appliance responses and have not yet been verified against physical appliances.
+**Sub-Zero CL4850UFDID is the primary tested appliance.** Cloud status and push snapshots have also been tested with Wolf SO3050PMSP. The additional fridge features, dedicated ice makers, hoods, oven controls, second-cavity support, and Cove entities are covered by automated tests using simulated appliance responses and have not yet been verified against physical appliances.
 
 Other models can be added if the cloud service returns their status. Their entities depend on which recognized properties they report.
 
@@ -156,9 +180,9 @@ Local network access and accounts requiring additional verification or an extern
 
 Selected appliances share account tokens and one cloud notification connection. Setup opens the push connection and waits up to 16 seconds for initial state, then requests any missing state. Healthy appliances trigger no periodic status requests. Lost connections reconnect with increasing delays, and rate-limit responses are honored.
 
-After an error, a reopened channel or an incoming state update triggers a fresh status read if no full push snapshot has restored the appliance. Failed recovery reads retry with increasing delays. An appliance that silently stops reporting may go unnoticed until a notification or a failed control request reveals it.
+After an error, a reopened channel or an incoming state update triggers a fresh status read if no full push snapshot has restored the appliance. A status read that fails while the push connection stays open, such as one confirming a control, starts recovery right away. Failed recovery reads retry with increasing delays. An appliance that silently stops reporting may go unnoticed until a notification or a failed control request reveals it.
 
-Control changes are confirmed from appliance status, not from the command acknowledgement. If no push update arrives, the integration makes one status request to check the setting. Changing a mode sends only the settings that differ, one at a time, and stops if a change fails.
+Control changes are confirmed from appliance status, not from the command acknowledgement. Property writes use up to three attempts, each allowing eight seconds for the request and its push confirmation. A command error or missing push confirmation then prompts a status read, which that deadline does not cut short; authentication and rate-limit errors stop immediately. A command that resends a value the appliance already reports, such as a cancel while the cycle already reports off, counts only when the cloud acknowledges it, so a remote start stops if a resent cooking mode or setpoint fails. Each retry rechecks whether the change is still allowed. Ice modes and remote starts preserve the app's ordered writes, including repeated values, and later writes stop if a setting cannot be confirmed. Queued ice-mode changes and remote starts use the state left by earlier commands, and a start for an appliance that is already running only sends a new setpoint. Kitchen-timer restarts require a fresh update or status read. Failed confirmation includes the last command error when one was reported.
 
 Sub-Zero does not document an API quota. Push updates keep requests low, but multiple appliances or unstable connections can still hit rate limits.
 

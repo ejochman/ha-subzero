@@ -30,8 +30,6 @@ from custom_components.subzero.diagnostics import (
     async_get_config_entry_diagnostics,
     async_get_device_diagnostics,
 )
-from custom_components.subzero.select import DESCRIPTIONS as SELECT_DESCRIPTIONS
-from custom_components.subzero.select import SubZeroSelect
 from custom_components.subzero.sensor import DESCRIPTIONS as SENSOR_DESCRIPTIONS
 from custom_components.subzero.sensor import SubZeroSensor
 
@@ -39,8 +37,13 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
 @pytest.fixture
-async def appliances(hass, tokens, request):
-    hass.config.units = US_CUSTOMARY_SYSTEM
+def unit_system():
+    return US_CUSTOMARY_SYSTEM
+
+
+@pytest.fixture
+async def appliances(hass, tokens, request, unit_system):
+    hass.config.units = unit_system
     unit = getattr(request, "param", "F")
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -157,6 +160,7 @@ async def appliances(hass, tokens, request):
             start = dt_util.utcnow()
             properties = {
                 f"{prefix}_active": value > 0,
+                f"{prefix}_complete": False,
                 f"{prefix}_start_time": start.isoformat() if value else None,
                 f"{prefix}_end_time": (start + timedelta(minutes=value)).isoformat()
                 if value
@@ -168,14 +172,13 @@ async def appliances(hass, tokens, request):
                 properties[key.replace("unit_on", "remote_ready")] = False
             if key == "wash_cycle_on" and value:
                 properties.update(remote_ready=False, wash_status=2)
+            elif key == "wash_cycle_on":
+                properties["wash_status"] = 4
         states[device_id].update(properties)
         if behavior["push"]:
             await updates.put((device_id, StateUpdate(properties, full=False)))
 
-    with (
-        patch("custom_components.subzero.SubZeroClient") as factory,
-        patch("custom_components.subzero.coordinator.CONTROL_CONFIRM_TIMEOUT", 0.02),
-    ):
+    with patch("custom_components.subzero.SubZeroClient") as factory:
         client = factory.return_value
         client.tokens = token_state(tokens)
         client.notification_stats = {
@@ -255,6 +258,31 @@ async def test_air_filter_reset_keeps_reported_life_until_it_changes(hass, appli
     assert hass.states.get(entity_id).state == "unavailable"
 
 
+async def test_cancelled_filter_reset_still_refreshes_status(hass, appliances):
+    await appliances.update("fridge", {"air_filter_pct_remaining": 10})
+    coordinator = appliances.entry.runtime_data.coordinators["fridge"]
+    entered = asyncio.get_running_loop().create_future()
+    finish = asyncio.Event()
+
+    async def read(device_id):
+        entered.set_result(asyncio.current_task())
+        await finish.wait()
+        return {**appliances.states[device_id], "air_filter_pct_remaining": 100}
+
+    appliances.client.state.side_effect = read
+    pending = asyncio.create_task(coordinator.async_reset_air_filter())
+    refresh = await asyncio.wait_for(entered, 1)
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert coordinator.last_update_success
+    finish.set()
+    await refresh
+    assert hass.states.get("sensor.fridge_air_filter_remaining").state == "100"
+    appliances.client.reset_air_filter.assert_awaited_once_with("fridge")
+
+
 @pytest.mark.parametrize("error", [ApiError("Reset rejected"), InvalidAuth("Sign in again")])
 async def test_air_filter_reset_reports_errors(hass, appliances, error):
     await appliances.update("fridge", {"air_filter_pct_remaining": 10})
@@ -330,6 +358,7 @@ async def test_extra_refrigeration_zones_follow_reported_properties(hass, applia
         )
 
 
+@pytest.mark.parametrize("appliances", ["F", "C"], indirect=True)
 async def test_wine_display_temperatures_survive_snapshots_and_updates(hass, appliances):
     await appliances.update(
         "fridge",
@@ -373,6 +402,7 @@ async def test_switches_send_only_the_selected_appliance_property(
         appliances.client.set_property.assert_awaited_with(device, key, value)
         assert hass.states.get(entity_id).state == expected
     assert appliances.client.set_property.await_count == 2
+    assert hass.states.get(entity_id.replace("switch.", "binary_sensor.")) is None
 
 
 @pytest.mark.parametrize(
@@ -391,14 +421,7 @@ async def test_remote_start_consumes_remote_ready(hass, appliances, device, key,
     await appliances.update(device, {ready: True})
     assert hass.states.get(entity_id).state != "unavailable"
     await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
-    expected = [call(device, key, True)]
-    if device == "dishwasher":
-        expected = [
-            call(device, "wash_cycle", 2),
-            call(device, "delay_start_timer_duration", 0),
-            call(device, "wash_cycle_on", True),
-        ]
-    assert appliances.client.set_property.await_args_list == expected
+    assert appliances.client.set_property.await_args_list == [call(device, key, True)]
     assert coordinator.data[key] is True
     assert coordinator.data[ready] is False
     assert hass.states.get(entity_id).state == "unavailable"
@@ -439,29 +462,6 @@ async def test_newer_oven_series_start_with_the_app_write_sequence(hass, applian
     appliances.client.set_property.assert_awaited_once_with("oven", "cav2_set_temp", 425)
 
 
-@pytest.mark.parametrize("appliances", ["C"], indirect=True)
-async def test_start_resends_reported_values_without_change_checks(hass, appliances):
-    await appliances.update("oven", {"appliance_type": "17.15.1.3", "cav_remote_ready": True})
-    await hass.services.async_call(
-        "button", "press", {"entity_id": "button.oven_start_oven"}, blocking=True
-    )
-    assert appliances.client.set_property.await_args_list == [
-        call("oven", "cav_cook_mode", 1),
-        call("oven", "cav_unit_on", True),
-        call("oven", "cav_set_temp", 350),
-    ]
-    appliances.client.set_property.reset_mock()
-    await appliances.update("dishwasher", {"remote_ready": True, "wash_status": 7})
-    await hass.services.async_call(
-        "button", "press", {"entity_id": "button.dishwasher_start_wash_cycle"}, blocking=True
-    )
-    assert appliances.client.set_property.await_args_list == [
-        call("dishwasher", "wash_cycle", 2),
-        call("dishwasher", "delay_start_timer_duration", 0),
-        call("dishwasher", "wash_cycle_on", True),
-    ]
-
-
 @pytest.mark.parametrize(
     ("prefix", "entity_id"),
     [
@@ -469,6 +469,7 @@ async def test_start_resends_reported_values_without_change_checks(hass, applian
         ("cav2", "number.oven_lower_oven_probe_target_temperature"),
     ],
 )
+@pytest.mark.parametrize("appliances", ["F", "C"], indirect=True)
 async def test_probe_target_requires_connected_probe_and_ready_cavity(
     hass, appliances, prefix, entity_id
 ):
@@ -573,6 +574,22 @@ async def test_lower_oven_controls_leave_the_upper_oven_alone(hass, appliances):
             True,
             "supported cooking mode",
         ),
+        (
+            {"cav_remote_ready": True, "cav_gourmet_mode_on": True},
+            "cav_unit_on",
+            True,
+            "control panel",
+        ),
+        ({"cav_remote_ready": True, "cav_door_ajar": 1}, "cav_unit_on", True, "door"),
+        *(
+            (
+                {"cav_remote_ready": True, "cav_set_temp": temperature},
+                "cav_unit_on",
+                True,
+                "oven temperature",
+            )
+            for temperature in (0, None, True)
+        ),
     ],
 )
 async def test_oven_interlocks_apply_below_the_entity_layer(
@@ -596,6 +613,77 @@ async def test_unsupported_cooking_mode_still_allows_turning_off(hass, appliance
 
 
 @pytest.mark.parametrize(
+    ("type_id", "entity_id", "options"),
+    [
+        (
+            "1.4.2.3",
+            "select.oven_cooking_mode",
+            ["Bake stone", "Convection roast", "Convection", "Dehydrate", "Warm"],
+        ),
+        (
+            "1.3.2.1",
+            "select.oven_cooking_mode",
+            ["Bake stone", "Convection bake", "Convection roast", "Convection", "Dehydrate"],
+        ),
+        ("1.3.2.1", "select.oven_lower_oven_cooking_mode", ["Bake stone"]),
+        ("1.15.2.4", "select.oven_lower_oven_cooking_mode", ["Warm"]),
+        (
+            "1.8.2.0",
+            "select.oven_lower_oven_cooking_mode",
+            ["Convection roast", "Convection", "Dehydrate", "Warm"],
+        ),
+    ],
+)
+async def test_cooking_modes_follow_series_and_cavity(
+    hass, appliances, type_id, entity_id, options
+):
+    await appliances.update("oven", {"appliance_type": type_id})
+    assert hass.states.get(entity_id).attributes["options"] == ["Off", "Bake", "Roast", *options]
+
+
+async def test_reported_cooking_mode_stays_listed_but_others_are_refused(hass, appliances):
+    entity_id = "select.oven_cooking_mode"
+    await appliances.update("oven", {"appliance_type": "1.15.1.3", "cav_cook_mode": 5})
+    assert hass.states.get(entity_id).state == "Convection bake"
+    assert "Convection bake" in hass.states.get(entity_id).attributes["options"]
+    await appliances.update("oven", {"cav_cook_mode": 1})
+    with pytest.raises(ServiceValidationError, match="not valid"):
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": entity_id, "option": "Convection bake"},
+            blocking=True,
+        )
+    appliances.client.set_property.assert_not_awaited()
+
+
+async def test_queued_cooking_mode_rechecks_the_offered_modes(hass, appliances):
+    entity_id = "select.oven_cooking_mode"
+    await appliances.update(
+        "oven", {"appliance_type": "1.15.1.3", "cav_cook_mode": 5, "cav_unit_on": True}
+    )
+    coordinator = appliances.entry.runtime_data.coordinators["oven"]
+    async with coordinator._command_lock:
+        tasks = [
+            asyncio.create_task(
+                hass.services.async_call(
+                    "select",
+                    "select_option",
+                    {"entity_id": entity_id, "option": option},
+                    blocking=True,
+                )
+            )
+            for option in ("Bake", "Convection bake")
+        ]
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    await tasks[0]
+    with pytest.raises(ServiceValidationError, match="supported cooking mode"):
+        await tasks[1]
+    appliances.client.set_property.assert_awaited_once_with("oven", "cav_cook_mode", 1)
+
+
+@pytest.mark.parametrize(
     ("type_id", "mode", "bounds"),
     [
         ("1.3.1.1", 1, (170, 550)),
@@ -604,6 +692,7 @@ async def test_unsupported_cooking_mode_still_allows_turning_off(hass, appliance
         ("1.4.1.1", 1, (200, 550)),
         ("1.4.1.1", 9, (85, 110)),
         ("1.4.1.1", 12, (140, 200)),
+        ("1.4.1.1", 8, (200, 550)),
         ("1.8.1.1", 8, (200, 550)),
         ("1.15.1.1", 10, (110, 170)),
     ],
@@ -631,7 +720,7 @@ async def test_oven_temperature_limits_follow_series_and_mode(
     assert appliances.client.set_property.await_count == 2
 
 
-@pytest.mark.parametrize(("series", "mode"), [(3, 12), (4, 8), (8, 5), (15, 5), (4, 3), (4, 0)])
+@pytest.mark.parametrize(("series", "mode"), [(3, 12), (4, 5), (8, 5), (15, 5), (4, 3), (4, 0)])
 async def test_nonadjustable_oven_modes_keep_power_controls(hass, appliances, series, mode):
     await appliances.update(
         "oven", {"appliance_type": f"1.{series}.1.1", "cav_cook_mode": mode, "cav_unit_on": True}
@@ -660,6 +749,72 @@ async def test_queued_start_rechecks_remote_ready(appliances):
     appliances.client.set_property.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "temperature,changed,writes",
+    [
+        (
+            None,
+            {"cav_cook_mode": 5},
+            [("cav_cook_mode", 5), ("cav_unit_on", True), ("cav_set_temp", 350)],
+        ),
+        (None, {"cav_unit_on": True}, []),
+        (400, {"cav_unit_on": True}, [("cav_set_temp", 400)]),
+    ],
+)
+async def test_queued_start_uses_state_after_previous_command(
+    appliances, temperature, changed, writes
+):
+    await appliances.update("oven", {"appliance_type": "17.15.1.3", "cav_remote_ready": True})
+    coordinator = appliances.entry.runtime_data.coordinators["oven"]
+    async with coordinator._command_lock:
+        task = asyncio.create_task(coordinator.async_start("cav_unit_on", temperature))
+        await asyncio.sleep(0)
+        await appliances.update("oven", changed)
+    await task
+    assert appliances.client.set_property.await_args_list == [
+        call("oven", key, value) for key, value in writes
+    ]
+
+
+@pytest.mark.parametrize(
+    "device,key,ready,changed,message",
+    [
+        ("oven", "cav_unit_on", "cav_remote_ready", {"cav_remote_ready": False}, "Remote Ready"),
+        ("oven", "cav_unit_on", "cav_remote_ready", {"cav_door_ajar": True}, "door"),
+        ("dishwasher", "wash_cycle_on", "remote_ready", {"remote_ready": False}, "Remote Ready"),
+        ("dishwasher", "wash_cycle_on", "remote_ready", {"door_ajar": True}, "door"),
+    ],
+)
+async def test_start_retry_rechecks_interlocks(appliances, device, key, ready, changed, message):
+    await appliances.update(device, {ready: True})
+    coordinator = appliances.entry.runtime_data.coordinators[device]
+
+    async def write(device_id, key, value):
+        appliances.states[device_id].update(changed)
+        coordinator.apply_update(StateUpdate(changed, full=False))
+
+    appliances.client.set_property.side_effect = write
+    with pytest.raises(ServiceValidationError, match=message):
+        await coordinator.async_set_properties({key: True})
+    appliances.client.set_property.assert_awaited_once_with(device, key, True)
+
+
+@pytest.mark.parametrize("appliances", [None], indirect=True)
+async def test_forced_retry_validates_a_value_that_no_longer_matches(appliances):
+    await appliances.update("oven", {"cav_remote_ready": True})
+    coordinator = appliances.entry.runtime_data.coordinators["oven"]
+
+    async def write(device_id, key, value):
+        appliances.states[device_id][key] = 375
+        coordinator.apply_update(StateUpdate({key: 375}, full=False))
+        raise ApiError("Sub-Zero returned HTTP 503.")
+
+    appliances.client.set_property.side_effect = write
+    with pytest.raises(ServiceValidationError, match="temperature unit"):
+        await coordinator.async_set_properties({"cav_set_temp": 350}, force=True)
+    appliances.client.set_property.assert_awaited_once_with("oven", "cav_set_temp", 350)
+
+
 async def test_turning_off_an_armed_idle_oven_cancels_remote_ready(hass, appliances):
     await appliances.update("oven", {"cav_remote_ready": True})
     assert hass.states.get("climate.oven_oven").state == "off"
@@ -678,7 +833,7 @@ async def test_off_ack_without_canceling_remote_ready_is_not_success(hass, appli
             "climate", "turn_off", {"entity_id": "climate.oven_oven"}, blocking=True
         )
     assert appliances.states["oven"]["cav_remote_ready"] is True
-    assert appliances.client.set_property.await_count == 1
+    assert appliances.client.set_property.await_count == 3
 
 
 @pytest.mark.parametrize(
@@ -708,6 +863,134 @@ async def test_timer_duration_is_confirmed_from_timer_state(hass, appliances, ke
     assert appliances.client.state.await_count == reads + (0 if push else 4)
 
 
+@pytest.mark.parametrize(
+    ("prefix", "entity_id"),
+    [
+        ("kitchen_timer", "number.oven_kitchen_timer_duration"),
+        ("kitchen_timer2", "number.oven_kitchen_timer_2_duration"),
+    ],
+)
+async def test_zero_clears_a_finished_timer(hass, appliances, prefix, entity_id):
+    await appliances.update("oven", {f"{prefix}_active": False, f"{prefix}_complete": True})
+    assert hass.states.get(entity_id).state == "0"
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": entity_id, "value": 0}, blocking=True
+    )
+    appliances.client.set_property.assert_awaited_once_with("oven", f"{prefix}_duration", 0)
+
+
+@pytest.mark.parametrize(("prefix", "suffix"), [("kitchen_timer", ""), ("kitchen_timer2", "_2")])
+async def test_dismiss_button_clears_a_finished_timer(hass, appliances, prefix, suffix):
+    entity_id = f"button.oven_dismiss_kitchen_timer{suffix}"
+    complete = f"binary_sensor.oven_kitchen_timer{suffix}_complete"
+    assert hass.states.get(entity_id).state == "unavailable"
+    await appliances.update("oven", {f"{prefix}_active": False, f"{prefix}_complete": True})
+    assert hass.states.get(entity_id).state != "unavailable"
+    await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    appliances.client.set_property.assert_awaited_once_with("oven", f"{prefix}_duration", 0)
+    assert hass.states.get(complete).state == "off"
+    assert hass.states.get(entity_id).state == "unavailable"
+
+
+@pytest.mark.parametrize(
+    ("domain", "service", "data"),
+    [
+        ("button", "press", {"entity_id": "button.oven_dismiss_kitchen_timer"}),
+        ("number", "set_value", {"entity_id": "number.oven_kitchen_timer_duration", "value": 0}),
+    ],
+)
+async def test_failed_timer_dismiss_is_not_success(hass, appliances, domain, service, data):
+    await appliances.update("oven", {"kitchen_timer_active": False, "kitchen_timer_complete": True})
+    appliances.client.set_property.side_effect = ApiError("Sub-Zero returned HTTP 503.")
+    with pytest.raises(HomeAssistantError, match="HTTP 503"):
+        await hass.services.async_call(domain, service, data, blocking=True)
+    assert hass.states.get("binary_sensor.oven_kitchen_timer_complete").state == "on"
+    assert appliances.client.set_property.await_count == 3
+
+
+async def hang(device_id, key, value):
+    await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize(
+    ("device", "update", "entity_id"),
+    [
+        (
+            "oven",
+            {"kitchen_timer_active": False, "kitchen_timer_complete": True},
+            "button.oven_dismiss_kitchen_timer",
+        ),
+        (
+            "dishwasher",
+            {"wash_cycle_on": False, "wash_status": 5},
+            "button.dishwasher_cancel_wash_cycle",
+        ),
+    ],
+)
+async def test_unanswered_resend_is_not_success(hass, appliances, device, update, entity_id):
+    await appliances.update(device, update)
+    appliances.client.set_property.side_effect = hang
+    with pytest.raises(HomeAssistantError, match="did not confirm"):
+        await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    assert appliances.client.set_property.await_count == 3
+    assert hass.states.get(entity_id).state != "unavailable"
+
+
+async def test_resend_answered_on_retry_succeeds(hass, appliances):
+    await appliances.update("oven", {"kitchen_timer_active": False, "kitchen_timer_complete": True})
+    original = appliances.client.set_property.side_effect
+
+    async def write(device_id, key, value):
+        if appliances.client.set_property.await_count == 1:
+            await hang(device_id, key, value)
+        await original(device_id, key, value)
+
+    appliances.client.set_property.side_effect = write
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.oven_dismiss_kitchen_timer"}, blocking=True
+    )
+    assert appliances.client.set_property.await_count == 2
+    assert hass.states.get("binary_sensor.oven_kitchen_timer_complete").state == "off"
+
+
+async def test_answered_resend_confirms_after_the_push_wait(hass, appliances, monkeypatch):
+    monkeypatch.setattr("custom_components.subzero.coordinator.CONTROL_PUSH_TIMEOUT", 5)
+    await appliances.update("oven", {"kitchen_timer_active": False, "kitchen_timer_complete": True})
+    appliances.behavior["push"] = False
+    original = appliances.client.set_property.side_effect
+
+    async def write(device_id, key, value):
+        await asyncio.sleep(0.03)
+        await original(device_id, key, value)
+
+    appliances.client.set_property.side_effect = write
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.oven_dismiss_kitchen_timer"}, blocking=True
+    )
+    assert appliances.client.set_property.await_count == 1
+    assert hass.states.get("binary_sensor.oven_kitchen_timer_complete").state == "off"
+
+
+async def test_unanswered_start_resend_stops_the_start(hass, appliances):
+    await appliances.update(
+        "oven",
+        {"appliance_type": "17.15.1.3", "cav_remote_ready": True, "cav_cook_mode": 1},
+    )
+    original = appliances.client.set_property.side_effect
+
+    async def write(device_id, key, value):
+        if key == "cav_cook_mode":
+            await hang(device_id, key, value)
+        await original(device_id, key, value)
+
+    appliances.client.set_property.side_effect = write
+    with pytest.raises(HomeAssistantError, match="did not confirm"):
+        await hass.services.async_call(
+            "button", "press", {"entity_id": "button.oven_start_oven"}, blocking=True
+        )
+    assert appliances.client.set_property.await_args_list == [call("oven", "cav_cook_mode", 1)] * 3
+
+
 @pytest.mark.parametrize("previous_minutes", [16, 45])
 async def test_timer_ack_without_correct_end_time_is_not_success(
     hass, appliances, previous_minutes
@@ -731,7 +1014,7 @@ async def test_timer_ack_without_correct_end_time_is_not_success(
             blocking=True,
         )
     assert hass.states.get("number.oven_kitchen_timer_duration").state == str(previous_minutes)
-    assert appliances.client.set_property.await_count == 1
+    assert appliances.client.set_property.await_count == 3
 
 
 @pytest.mark.parametrize(
@@ -800,7 +1083,36 @@ async def test_dishwasher_cancel_needs_confirmation_but_not_remote_ready(hass, a
                 "button", "press", {"entity_id": entity_id}, blocking=True
             )
         assert hass.states.get("binary_sensor.dishwasher_wash_cycle_active").state == "on"
+    assert appliances.client.set_property.await_args_list == [
+        call("dishwasher", "wash_cycle_on", False)
+    ] * (1 if accept else 3)
+
+
+async def test_dishwasher_cancel_follows_wash_status(hass, appliances):
+    entity_id = "button.dishwasher_cancel_wash_cycle"
+    for status in (0, 6):
+        await appliances.update("dishwasher", {"wash_cycle_on": False, "wash_status": status})
+        assert hass.states.get(entity_id).state == "unavailable"
+    await appliances.update("dishwasher", {"wash_cycle_on": False, "wash_status": 7})
+    assert hass.states.get(entity_id).state != "unavailable"
+    await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
     appliances.client.set_property.assert_awaited_once_with("dishwasher", "wash_cycle_on", False)
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "unavailable"
+
+
+@pytest.mark.parametrize("status", [5, 7])
+async def test_failed_cancel_is_not_confirmed_by_a_cycle_already_off(hass, appliances, status):
+    entity_id = "button.dishwasher_cancel_wash_cycle"
+    await appliances.update("dishwasher", {"wash_cycle_on": False, "wash_status": status})
+    appliances.client.set_property.side_effect = ApiError("Sub-Zero returned HTTP 503.")
+    with pytest.raises(HomeAssistantError, match="HTTP 503"):
+        await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    assert (
+        appliances.client.set_property.await_args_list
+        == [call("dishwasher", "wash_cycle_on", False)] * 3
+    )
+    assert hass.states.get(entity_id).state != "unavailable"
 
 
 async def test_dishwasher_modes_follow_capability_and_block_start_in_sabbath(hass, appliances):
@@ -909,6 +1221,12 @@ async def test_gourmet_programs_are_discovered_from_reported_recipe_codes(hass, 
     assert hass.states.get(upper).state == "Baked potato"
     assert hass.states.get(lower).state == "Fresh pizza"
 
+    await appliances.update("oven", {"cav_gourmet_mode_on": False})
+    assert hass.states.get(upper).state == "None"
+    assert hass.states.get(lower).state == "Fresh pizza"
+    await appliances.update("oven", {"cav_gourmet_mode_on": True})
+    assert hass.states.get(upper).state == "Baked potato"
+
     await appliances.update("oven", {"cav_gourmet_recipe": 0, "cav2_gourmet_recipe": 79})
     assert hass.states.get(upper).state == "None"
     assert hass.states.get(lower).state == "Lasagna, 3 racks"
@@ -985,8 +1303,8 @@ async def test_full_snapshot_marks_missing_controls_unavailable(hass, appliances
     assert hass.states.get("sensor.dishwasher_wash_status").state == "Idle"
 
 
-@pytest.mark.parametrize("appliances", ["C", None], indirect=True)
-async def test_non_fahrenheit_units_omit_temperature_entities(hass, appliances):
+@pytest.mark.parametrize("appliances", ["K", None], indirect=True)
+async def test_unknown_units_omit_temperature_entities(hass, appliances):
     assert hass.states.get("climate.oven_oven") is None
     assert hass.states.get("climate.fridge_refrigerator") is None
     assert hass.states.get("number.oven_probe_target_temperature") is None
@@ -995,6 +1313,7 @@ async def test_non_fahrenheit_units_omit_temperature_entities(hass, appliances):
     assert hass.states.get("switch.dishwasher_heated_dry").state == "off"
 
 
+@pytest.mark.parametrize("appliances", ["F", "C"], indirect=True)
 async def test_climate_writes_convert_celsius_to_fahrenheit(hass, appliances):
     hass.config.units = METRIC_SYSTEM
     await appliances.update("oven", {"cav_unit_on": True})
@@ -1005,6 +1324,42 @@ async def test_climate_writes_convert_celsius_to_fahrenheit(hass, appliances):
         blocking=True,
     )
     appliances.client.set_property.assert_awaited_once_with("oven", "cav_set_temp", 392)
+
+
+@pytest.mark.parametrize("appliances", ["F", "C"], indirect=True)
+@pytest.mark.parametrize("unit_system", [METRIC_SYSTEM])
+async def test_temperature_readings_and_limits_follow_home_assistant_units(hass, appliances):
+    temperature = hass.states.get("sensor.fridge_refrigerator_display_temperature")
+    assert float(temperature.state) == pytest.approx((37 - 32) / 1.8)
+    assert temperature.attributes["unit_of_measurement"] == "°C"
+    fridge = hass.states.get("climate.fridge_refrigerator")
+    assert fridge.attributes["current_temperature"] == pytest.approx(2.8)
+    assert fridge.attributes["temperature"] == pytest.approx(3.3)
+    freezer = hass.states.get("climate.fridge_freezer")
+    assert freezer.attributes["temperature"] == pytest.approx(-17.8)
+    oven = hass.states.get("climate.oven_oven")
+    assert oven.attributes["current_temperature"] == pytest.approx(23.9)
+    assert oven.attributes["temperature"] == pytest.approx(176.7)
+
+    await appliances.update("oven", {"cav_unit_on": True, "cav_cook_mode": 12})
+    oven = hass.states.get("climate.oven_oven")
+    assert oven.attributes["min_temp"] == pytest.approx(60)
+    assert oven.attributes["max_temp"] == pytest.approx(93.3)
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": oven.entity_id, "temperature": 60},
+        blocking=True,
+    )
+    appliances.client.set_property.assert_awaited_once_with("oven", "cav_set_temp", 140)
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "climate",
+            "set_temperature",
+            {"entity_id": oven.entity_id, "temperature": 94},
+            blocking=True,
+        )
+    assert appliances.client.set_property.await_count == 1
 
 
 async def test_diagnostics_omit_private_values(hass, appliances):
@@ -1048,7 +1403,6 @@ async def test_diagnostics_list_unrecognized_keys_without_values(hass, appliance
     result = await async_get_device_diagnostics(hass, appliances.entry, device)
     assert result["unrecognized_state_keys"] == [
         "ap_ssid",
-        "appliance_serial",
         "new_push_feature",
         "new_read_feature",
         "new_snapshot_feature",
@@ -1093,23 +1447,6 @@ async def test_nested_json_notifications_update_the_door_entity(hass, appliances
         )
     assert appliances.client.state.await_count == 3
     appliances.client.set_property.assert_not_called()
-
-
-async def test_switch_states_update_without_duplicate_binary_sensors(hass, appliances):
-    switches = {
-        "oven_oven_light": ("oven", "cav_light_on"),
-        "oven_lower_oven_light": ("oven", "cav2_light_on"),
-        "dishwasher_heated_dry": ("dishwasher", "heated_dry_on"),
-        "dishwasher_extended_dry": ("dishwasher", "extended_dry_on"),
-        "dishwasher_high_temperature_wash": ("dishwasher", "high_temp_wash_on"),
-        "dishwasher_sanitize_rinse": ("dishwasher", "sani_rinse_on"),
-        "dishwasher_top_rack_only": ("dishwasher", "top_rack_only_on"),
-    }
-    for name, (device_id, key) in switches.items():
-        assert hass.states.get(f"switch.{name}").state == "off"
-        await appliances.update(device_id, {key: True})
-        assert hass.states.get(f"switch.{name}").state == "on"
-        assert hass.states.get(f"binary_sensor.{name}") is None
 
 
 async def test_minor_upgrade_removes_only_retired_entities(hass, appliances):
@@ -1254,12 +1591,6 @@ async def test_accent_light_accepts_both_reported_encodings(hass, appliances):
 
 async def test_optional_entities_report_native_values(appliances):
     coordinator = appliances.entry.runtime_data.coordinators["fridge"]
-    light = SubZeroSelect(
-        coordinator, next(d for d in SELECT_DESCRIPTIONS if d.key == "accent_light_level")
-    )
-    await light.async_select_option("Medium")
-    appliances.client.set_property.assert_awaited_once_with("fridge", "accent_light_level", 120)
-    assert light.current_option == "Medium"
     uptime = SubZeroSensor(coordinator, next(d for d in SENSOR_DESCRIPTIONS if d.key == "uptime"))
     assert uptime.native_value == 435 * 3600 + 53 * 60 + 58
     reporting = SubZeroSensor(
@@ -1365,7 +1696,7 @@ async def test_fault_metadata_uses_the_appliance_series_name(hass, appliances):
     await coordinator.async_refresh()
     appliances.client.fault_metadata.assert_awaited_once_with("ICE01", "nge")
     appliances.client.fault_metadata.reset_mock()
-    await appliances.update("fridge", {"appliance_type": "not-a-type"})
+    await appliances.update("fridge", {"appliance_type": "17.99.1.1"})
     await coordinator.async_refresh()
     appliances.client.fault_metadata.assert_not_awaited()
 
@@ -1391,23 +1722,6 @@ async def test_fault_metadata_is_retried_after_a_failed_lookup(hass, appliances)
     assert hass.states.get("sensor.fridge_active_faults").attributes["faults"] == [
         {"code": "ICE01", "severity": "high", "created": created, "title": "Ice fault"}
     ]
-
-
-async def test_sensor_and_diagnostics_share_fault_record_fields(hass, appliances):
-    created = "2026-03-01T12:00:00+00:00"
-    appliances.client.appliance_faults = AsyncMock(
-        return_value=[ApplianceFault("ICE01", 3, True, created, "Ice maker")]
-    )
-    coordinator = appliances.entry.runtime_data.fault_coordinators["fridge"]
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    attributes = hass.states.get("sensor.fridge_active_faults").attributes["faults"][0]
-    device = dr.async_get(hass).async_get_device_by_identifier(
-        (DOMAIN, "fridge"), appliances.entry.entry_id
-    )
-    diagnostics = (await async_get_device_diagnostics(hass, appliances.entry, device))["faults"][0]
-    for key in ("code", "severity", "description", "created"):
-        assert attributes[key] == diagnostics[key]
 
 
 async def test_diagnostics_include_faults_without_identifiers(hass, appliances):
@@ -1436,25 +1750,6 @@ async def test_diagnostics_include_faults_without_identifiers(hass, appliances):
     for item in result["faults"]:
         assert "id" not in item
         assert "deviceId" not in item
-
-
-@pytest.mark.parametrize(
-    "properties",
-    [
-        {"cav_set_temp": 0},
-        {"cav_set_temp": None},
-        {"cav_set_temp": True},
-        {"cav_gourmet_mode_on": True},
-        {"cav_door_ajar": 1},
-    ],
-)
-async def test_remote_start_rejects_incomplete_or_manual_cooking_setup(appliances, properties):
-    await appliances.update("oven", {"cav_remote_ready": True, **properties})
-    with pytest.raises(ServiceValidationError):
-        await appliances.entry.runtime_data.coordinators["oven"].async_set_properties(
-            {"cav_unit_on": True}
-        )
-    appliances.client.set_property.assert_not_called()
 
 
 @pytest.mark.parametrize("door", [True, 1, None])
@@ -1514,7 +1809,7 @@ async def test_null_setpoint_disables_controls_but_not_the_sensor(hass, applianc
 @pytest.mark.parametrize(
     ("appliances", "update", "message"),
     [
-        ("C", {"cav_set_temp": 375}, "Fahrenheit"),
+        (None, {"cav_set_temp": 375}, "temperature unit"),
         ("F", {"cav_cook_mode": 10, "cav_set_temp": 150}, "range"),
     ],
     indirect=["appliances"],

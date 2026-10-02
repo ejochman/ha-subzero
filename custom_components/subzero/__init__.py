@@ -6,6 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -14,7 +15,9 @@ from .api import SubZeroClient
 from .app_config import SUBSCRIPTION_KEY
 from .auth import InvalidAuth
 from .const import DISHWASHER_SWITCHES, DOMAIN
+from .controls import excluded_entity_keys
 from .coordinator import SubZeroAccount, SubZeroCoordinator, selected_devices
+from .services import async_setup_services
 
 PLATFORMS = [
     Platform.SENSOR,
@@ -24,8 +27,17 @@ PLATFORMS = [
     Platform.SWITCH,
     Platform.CLIMATE,
     Platform.BUTTON,
+    Platform.FAN,
+    Platform.LIGHT,
+    Platform.EVENT,
 ]
 type SubZeroConfigEntry = ConfigEntry[SubZeroAccount]
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SubZeroConfigEntry) -> bool:
@@ -58,6 +70,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: SubZeroConfigEntry) -> b
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
         if not device.identifiers.intersection(identifiers):
             registry.async_remove_device(device.id)
+    # Entities left from earlier versions for properties the app discards.
+    excluded = {
+        f"{coordinator.device_id}_{key}"
+        for coordinator in account.coordinators.values()
+        for key in excluded_entity_keys(coordinator.data)
+    }
+    entities = er.async_get(hass)
+    for entity in er.async_entries_for_config_entry(entities, entry.entry_id):
+        if entity.unique_id in excluded:
+            entities.async_remove(entity.entity_id)
     return True
 
 

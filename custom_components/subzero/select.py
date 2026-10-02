@@ -13,14 +13,19 @@ from .const import (
     DOOR_AJAR_TIMEOUTS,
     FRIDGE_ENUM_OPTIONS,
     FRIDGE_MODE_KEYS,
+    HOOD_SENSITIVITY,
     ICE_KEYS,
+    ICE_MODES,
     MANUAL_COOK_MODES,
     WASH_CYCLES,
 )
 from .controls import (
     accent_light_options,
+    cook_mode_offered,
     enum_labels,
+    ice_mode,
     is_fridge,
+    is_ice_maker,
     supports_control,
     wash_settings_enabled,
 )
@@ -32,8 +37,10 @@ MODES = {
     "Short vacation": "short_vacation_on",
     "Long vacation": "long_vacation_on",
 }
-ICE_MODES = {"Max ice": "max_ice_on", "Night ice": "night_ice_on"}
 DESCRIPTIONS = (
+    SelectEntityDescription(
+        key="auto_sensivity", name="Automatic fan sensitivity", icon="mdi:fan-auto"
+    ),
     SelectEntityDescription(key="ice_maker_mode", name="Ice maker", icon="mdi:ice-pop"),
     SelectEntityDescription(key="operating_mode", name="Mode", icon="mdi:fridge-outline"),
     SelectEntityDescription(
@@ -59,6 +66,7 @@ DESCRIPTIONS = (
     ),
 )
 ENUM_OPTIONS = {
+    "auto_sensivity": HOOD_SENSITIVITY,
     **FRIDGE_ENUM_OPTIONS,
     "cav_cook_mode": COOK_MODES,
     "cav2_cook_mode": COOK_MODES,
@@ -74,13 +82,19 @@ ENUM_OPTIONS = {
 
 def control_keys(key: str, data: dict) -> tuple[str, ...]:
     if key == "ice_maker_mode":
+        if is_ice_maker(data):
+            return ("ice_maker_on",) if "ice_maker_on" in data else ()
         return (
             tuple(k for k in ICE_KEYS if k in data)
             if is_fridge(data) and "ice_maker_on" in data
             else ()
         )
     if key == "operating_mode":
-        return tuple(k for k in FRIDGE_MODE_KEYS if k in data) if is_fridge(data) else ()
+        # The app offers the modes an appliance reports when it has a
+        # refrigerator, freezer, or wine setpoint.
+        if all(data.get(k) is None for k in ("ref_set_temp", "frz_set_temp", "wine_set_temp")):
+            return ()
+        return tuple(k for k in FRIDGE_MODE_KEYS if data.get(k) is not None)
     return (key,) if key in ENUM_OPTIONS and supports_control(data, key) else ()
 
 
@@ -101,15 +115,18 @@ class SubZeroSelect(SubZeroEntity, SelectEntity):
     def options(self) -> list[str]:
         data = self.coordinator.data
         if self.entity_description.key == "ice_maker_mode":
-            return ["Off", "On", *(name for name, key in ICE_MODES.items() if key in data)]
+            keys = control_keys("ice_maker_mode", data)
+            return ["Off", "On", *(name for name, key in ICE_MODES.items() if key in keys)]
         if self.entity_description.key == "operating_mode":
-            return ["Normal", *(name for name, key in MODES.items() if key in data)]
+            keys = control_keys("operating_mode", data)
+            return ["Normal", *(name for name, key in MODES.items() if key in keys)]
         key = self.entity_description.key
         if key.endswith("_cook_mode"):
             return [
                 name
                 for name, value in COOK_MODES.items()
-                if value not in MANUAL_COOK_MODES or value == data.get(key)
+                if value == data.get(key)
+                or (value not in MANUAL_COOK_MODES and cook_mode_offered(data, key, value))
             ]
         names = list(ENUM_OPTIONS[key])
         reported = enum_labels(key).get(data.get(key)) if key in FRIDGE_ENUM_OPTIONS else None
@@ -144,10 +161,7 @@ class SubZeroSelect(SubZeroEntity, SelectEntity):
                 (name for name, value in ENUM_OPTIONS[key].items() if data[key] == value), None
             )
         if self.entity_description.key == "ice_maker_mode":
-            active = [name for name, key in ICE_MODES.items() if data.get(key) is True]
-            if active:
-                return active[0] if len(active) == 1 else None
-            return "On" if data["ice_maker_on"] else "Off"
+            return ice_mode(data)
         active = [name for name, key in MODES.items() if data.get(key) is True]
         return active[0] if len(active) == 1 else "Normal" if not active else None
 
@@ -165,14 +179,8 @@ class SubZeroSelect(SubZeroEntity, SelectEntity):
         elif key in ENUM_OPTIONS:
             properties = {key: ENUM_OPTIONS[key][option]}
         elif key == "ice_maker_mode":
-            selected = ICE_MODES.get(option)
-            properties = {
-                k: False for k in control_keys(key, data) if k not in ("ice_maker_on", selected)
-            }
-            if option in ("On", "Off"):
-                properties["ice_maker_on"] = option == "On"
-            if selected is not None:
-                properties[selected] = True
+            await self.coordinator.async_set_ice_mode(option)
+            return
         else:
             selected = MODES.get(option)
             properties = {k: False for k in control_keys(key, data) if k != selected}

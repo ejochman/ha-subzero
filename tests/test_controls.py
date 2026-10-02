@@ -76,10 +76,7 @@ async def controls(hass, tokens, request):
         if behavior["push"]:
             await updates.put((device_id, StateUpdate(dict(properties), full=False)))
 
-    with (
-        patch("custom_components.subzero.SubZeroClient") as factory,
-        patch("custom_components.subzero.coordinator.CONTROL_CONFIRM_TIMEOUT", 0.02),
-    ):
+    with patch("custom_components.subzero.SubZeroClient") as factory:
         client = factory.return_value
         client.tokens = token_state(tokens)
         client.appliances = AsyncMock(
@@ -148,8 +145,8 @@ async def test_air_purification_switch_confirms_from_push(hass, controls):
 @pytest.mark.parametrize(
     ("option", "writes"),
     [
-        ("Off", [("night_ice_on", False), ("ice_maker_on", False)]),
-        ("On", [("night_ice_on", False)]),
+        ("Off", [("max_ice_on", False), ("night_ice_on", False), ("ice_maker_on", False)]),
+        ("On", [("night_ice_on", False), ("ice_maker_on", True)]),
         ("Max ice", [("night_ice_on", False), ("max_ice_on", True)]),
         ("Night ice", []),
     ],
@@ -201,7 +198,10 @@ async def test_night_ice_from_off_leaves_ice_maker_power_alone(hass, controls):
         {"entity_id": "select.kitchen_ice_maker", "option": "Night ice"},
         blocking=True,
     )
-    controls.client.set_property.assert_awaited_once_with("test-fridge", "night_ice_on", True)
+    assert controls.client.set_property.await_args_list == [
+        call("test-fridge", "max_ice_on", False),
+        call("test-fridge", "night_ice_on", True),
+    ]
     assert hass.states.get("select.kitchen_ice_maker").state == "Night ice"
     assert hass.states.get("binary_sensor.kitchen_ice_maker_enabled").state == "off"
 
@@ -209,7 +209,7 @@ async def test_night_ice_from_off_leaves_ice_maker_power_alone(hass, controls):
 @pytest.mark.parametrize(
     ("option", "writes"),
     [
-        ("Off", [("night_ice_on", False)]),
+        ("Off", [("max_ice_on", False), ("night_ice_on", False), ("ice_maker_on", False)]),
         ("On", [("night_ice_on", False), ("ice_maker_on", True)]),
         ("Max ice", [("night_ice_on", False), ("max_ice_on", True)]),
     ],
@@ -437,6 +437,8 @@ async def test_failed_mode_change_preserves_partial_state(hass, controls):
     assert controls.client.set_property.await_args_list == [
         call("test-fridge", "night_ice_on", False),
         call("test-fridge", "max_ice_on", True),
+        call("test-fridge", "max_ice_on", True),
+        call("test-fridge", "max_ice_on", True),
     ]
     assert hass.states.get("select.kitchen_ice_maker").state == "On"
     assert hass.states.get("binary_sensor.kitchen_max_ice").state == "off"
@@ -491,19 +493,32 @@ async def test_invalid_temperatures_do_not_reach_the_api(hass, controls, entity,
     controls.client.set_property.assert_not_called()
 
 
-async def test_celsius_display_converts_to_a_whole_fahrenheit_setpoint(hass, controls):
+@pytest.mark.parametrize("controls", ["F", "C"], indirect=True)
+@pytest.mark.parametrize(
+    ("entity", "key", "celsius", "fahrenheit"),
+    [
+        ("refrigerator", "ref_set_temp", 1.2, 34),
+        ("refrigerator", "ref_set_temp", 4, 39),
+        ("refrigerator", "ref_set_temp", 5.5, 42),
+        ("freezer", "frz_set_temp", -20, -4),
+    ],
+)
+async def test_celsius_display_converts_to_a_whole_fahrenheit_setpoint(
+    hass, controls, entity, key, celsius, fahrenheit
+):
     hass.config.units = METRIC_SYSTEM
     await hass.services.async_call(
         "number",
         "set_value",
-        {"entity_id": "number.kitchen_refrigerator_setpoint", "value": 4},
+        {"entity_id": f"number.kitchen_{entity}_setpoint", "value": celsius},
         blocking=True,
     )
-    controls.client.set_property.assert_awaited_once_with("test-fridge", "ref_set_temp", 39)
+    controls.client.set_property.assert_awaited_once_with("test-fridge", key, fahrenheit)
+    assert type(controls.client.set_property.call_args.args[2]) is int
 
 
-@pytest.mark.parametrize("controls", ["C", None], indirect=True)
-async def test_unknown_native_temperature_units_keep_other_controls(hass, controls):
+@pytest.mark.parametrize("controls", ["K", None], indirect=True)
+async def test_unknown_temperature_units_keep_other_controls(hass, controls):
     assert hass.states.get("number.kitchen_refrigerator_setpoint") is None
     assert hass.states.get("number.kitchen_freezer_setpoint") is None
     assert hass.states.get("number.kitchen_crisper_setpoint") is None
@@ -551,17 +566,17 @@ async def test_unconfirmed_write_reports_failure(hass, controls):
             "switch", "turn_off", {"entity_id": "switch.kitchen_air_purification"}, blocking=True
         )
     assert hass.states.get("switch.kitchen_air_purification").state == "on"
-    assert controls.client.set_property.await_count == 1
+    assert controls.client.set_property.await_count == 3
 
 
-async def test_failed_write_is_not_retried(hass, controls):
+async def test_failed_write_retries_and_preserves_the_error(hass, controls):
     controls.client.set_property.side_effect = ApiError("Could not connect to Sub-Zero.")
     with pytest.raises(HomeAssistantError, match="Could not connect"):
         await hass.services.async_call(
             "switch", "turn_off", {"entity_id": "switch.kitchen_air_purification"}, blocking=True
         )
     assert hass.states.get("switch.kitchen_air_purification").state == "on"
-    assert controls.client.set_property.await_count == 1
+    assert controls.client.set_property.await_count == 3
 
 
 async def test_expired_write_authentication_starts_reauthentication(hass, controls):
@@ -631,6 +646,92 @@ async def test_options_follow_reported_capabilities(hass, controls):
     controls.client.set_property.assert_not_called()
 
 
+ALL_MODES = ["Normal", "Sabbath", "High use", "Short vacation", "Long vacation"]
+
+
+@pytest.mark.parametrize(
+    ("type_id", "options"),
+    [
+        ("1.5.2.0", ALL_MODES),
+        ("1.5.1.0", ["Normal", "Sabbath"]),
+        ("1.14.1.0", ["Normal", "Sabbath"]),
+        ("1.18.4.0", ["Normal", "Sabbath"]),
+    ],
+)
+async def test_wine_storage_offers_the_modes_the_app_shows(hass, controls, type_id, options):
+    snapshot = {
+        "appliance_model": "DEU2450WDZ",
+        "appliance_type": type_id,
+        "wine_set_temp": 55,
+        "wine2_set_temp": 45,
+        "sabbath_on": False,
+        "high_use_on": False,
+        "short_vacation_on": False,
+        "long_vacation_on": False,
+    }
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").attributes["options"] == options
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.kitchen_mode", "option": "Sabbath"},
+        blocking=True,
+    )
+    controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
+    assert hass.states.get("select.kitchen_mode").state == "Sabbath"
+
+
+async def test_an_active_discarded_mode_is_not_shown_or_cleared(hass, controls):
+    snapshot = {
+        "appliance_model": "DEU2450WDZ",
+        "appliance_type": "1.5.1.0",
+        "wine_set_temp": 55,
+        "sabbath_on": False,
+        "high_use_on": True,
+    }
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").state == "Normal"
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.kitchen_mode", "option": "Sabbath"},
+        blocking=True,
+    )
+    controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
+
+
+async def test_modes_reported_as_null_are_left_out(hass, controls):
+    snapshot = {
+        "appliance_model": "DEU2450WDZ",
+        "wine_set_temp": 55,
+        "sabbath_on": False,
+        "high_use_on": None,
+    }
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").attributes["options"] == ["Normal", "Sabbath"]
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": "select.kitchen_mode", "option": "Sabbath"},
+        blocking=True,
+    )
+    controls.client.set_property.assert_awaited_once_with("test-fridge", "sabbath_on", True)
+
+
+@pytest.mark.parametrize(
+    "setpoints",
+    [{"wine2_set_temp": 45}, {"wine_set_temp": None, "wine2_set_temp": 45}, {"ref2_set_temp": 38}],
+)
+async def test_modes_need_a_primary_setpoint(hass, controls, setpoints):
+    snapshot = {"appliance_model": "FUTURE-MODEL", **setpoints, "sabbath_on": False}
+    await controls.updates.put(("test-fridge", StateUpdate(snapshot, full=True)))
+    await hass.async_block_till_done()
+    assert hass.states.get("select.kitchen_mode").state == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("model", "maximum"),
     [("CL4850UFDID", 42), ("DEC3050R", 42), ("BI-36U", 45), ("IT-36CI", 45), ("FUTURE-MODEL", 42)],
@@ -680,7 +781,3 @@ def test_wine_storage_is_recognized_without_a_fridge_setpoint():
     assert supports_control(data, "wine_set_temp")
     assert supports_control(data, "wine2_set_temp")
     assert supports_control(data, "accent_light_level")
-
-
-def test_wine_setpoints_are_not_reported_without_wine_keys():
-    assert not supports_control({"ref_set_temp": 38}, "wine_set_temp")

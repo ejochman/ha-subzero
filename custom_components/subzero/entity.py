@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import SubZeroConfigEntry
+from .controls import excluded_entity_keys
 from .coordinator import SubZeroCoordinator
 
 
@@ -27,7 +28,11 @@ class SubZeroEntity(CoordinatorEntity[SubZeroCoordinator]):
 
     @property
     def available(self) -> bool:
-        return super().available and self.entity_description.key in self.coordinator.data
+        return (
+            super().available
+            and self.entity_description.key in self.coordinator.data
+            and self.entity_description.key not in excluded_entity_keys(self.coordinator.data)
+        )
 
 
 @callback
@@ -46,7 +51,11 @@ def async_setup_entities(
         entities = []
         for description in descriptions:
             key = (coordinator.device_id, description.key)
-            if key not in discovered and supported(coordinator, description):
+            if (
+                key not in discovered
+                and description.key not in excluded_entity_keys(coordinator.data)
+                and supported(coordinator, description)
+            ):
                 discovered.add(key)
                 entities.append(entity_class(coordinator, description))
         if entities:

@@ -107,6 +107,7 @@ async def test_reported_properties_drive_entity_discovery(hass, loaded):
     registry = er.async_get(hass)
     entities = er.async_entries_for_config_entry(registry, entry.entry_id)
     assert {entity.unique_id for entity in entities} == {
+        "test-fridge_appliance_event",
         "test-fridge_ref_set_temp",
         "test-fridge_ref_door_ajar",
         "test-fridge_live_reporting_mode",
@@ -116,7 +117,10 @@ async def test_reported_properties_drive_entity_discovery(hass, loaded):
     assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "off"
     coordinator = entry.runtime_data.coordinators["test-fridge"]
     assert "ap_ssid" not in coordinator.data
-    assert "appliance_serial" not in coordinator.data
+    device = dr.async_get(hass).async_get_device_by_identifier(
+        (DOMAIN, "test-fridge"), entry.entry_id
+    )
+    assert device.serial_number == "private-serial"
     assert coordinator.update_interval is None
     assert entry.version == 2
     assert entry.unique_id == "test-fridge"
@@ -186,6 +190,44 @@ async def test_startup_read_keeps_newer_push_state(hass, loaded):
     assert entry.state is ConfigEntryState.LOADED
     assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "on"
     assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "38"
+
+
+async def test_serial_follows_newer_push_state(hass, loaded):
+    entry, client, _, _, _ = loaded
+    connected = asyncio.Event()
+    delivered = asyncio.Event()
+    updates = asyncio.Queue()
+
+    async def watch(device_ids):
+        connected.set()
+        while True:
+            yield "test-fridge", await updates.get()
+            delivered.set()
+
+    async def state(device_id):
+        assert connected.is_set()
+        await updates.put(
+            StateUpdate(
+                {"appliance_model": "PUSHED-MODEL", "appliance_serial": "pushed-serial"},
+                full=True,
+            )
+        )
+        await delivered.wait()
+        return {"appliance_model": "ANOTHER-MODEL", "appliance_serial": "read-serial"}
+
+    client.watch = watch
+    client.state.side_effect = state
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    registry = dr.async_get(hass)
+    device = registry.async_get_device_by_identifier((DOMAIN, "test-fridge"), entry.entry_id)
+    assert (device.model, device.serial_number) == ("PUSHED-MODEL", "pushed-serial")
+    await updates.put(StateUpdate({"appliance_serial": "later-serial"}, full=False))
+    await hass.async_block_till_done()
+    assert registry.async_get(device.id).serial_number == "later-serial"
+    await updates.put(StateUpdate({"appliance_model": "REPLACED-MODEL"}, full=True))
+    await hass.async_block_till_done()
+    assert registry.async_get(device.id).serial_number is None
 
 
 async def test_startup_push_survives_a_pending_status_read_failure(hass, loaded):
@@ -365,8 +407,8 @@ async def test_unload_closes_push_listener(hass, loaded):
     assert disconnected.is_set()
 
 
-@pytest.mark.parametrize("loaded", ["C", None], indirect=True)
-async def test_celsius_or_unknown_units_skip_temperature_entities(hass, loaded):
+@pytest.mark.parametrize("loaded", ["K", None], indirect=True)
+async def test_unknown_units_skip_temperature_entities(hass, loaded):
     assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "off"
     assert hass.states.get("sensor.kitchen_refrigerator_setpoint") is None
 
@@ -395,7 +437,7 @@ async def test_reload_refreshes_saved_units(hass, loaded, options):
         "name": "Kitchen",
         "temperature_unit": "C",
     }
-    assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "unavailable"
+    assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "38"
     assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "off"
 
     client.appliances.side_effect = ApiError("Temporarily unavailable")
@@ -404,7 +446,7 @@ async def test_reload_refreshes_saved_units(hass, loaded, options):
     assert entry.state is ConfigEntryState.LOADED
     assert client.appliances.await_count == 3
     assert entry.runtime_data.coordinators["test-fridge"].device["temperature_unit"] == "C"
-    assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "unavailable"
+    assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "38"
     assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "off"
 
     client.appliances.side_effect = None
@@ -466,7 +508,7 @@ async def test_units_are_saved_even_if_status_fails(hass, loaded):
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
     assert entry.runtime_data.coordinators["test-fridge"].device["temperature_unit"] == "C"
-    assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "unavailable"
+    assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "38"
 
 
 @pytest.mark.parametrize("loaded", ["F", "C", None], indirect=True)
@@ -484,7 +526,7 @@ async def test_appliance_list_outage_uses_cached_units(hass, loaded, caplog):
     client.state.assert_awaited_once_with("test-fridge")
     assert entry.runtime_data.coordinators["test-fridge"].device["temperature_unit"] == unit
     temperature = hass.states.get("sensor.kitchen_refrigerator_setpoint")
-    if unit == "F":
+    if unit in ("F", "C"):
         assert temperature.state == "38"
     else:
         assert temperature is None
@@ -630,14 +672,44 @@ async def test_failed_status_read_recovers_on_an_existing_push_connection(hass, 
         {"appliance_model": "ANOTHER-MODEL", "ref_door_ajar": True, "ref_set_temp": 39},
     ]
     await coordinator.async_refresh()
-    assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "unavailable"
-    await updates.put(StateUpdate({"ref_door_ajar": True}, full=False))
     await hass.async_block_till_done()
     assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "on"
     assert hass.states.get("sensor.kitchen_refrigerator_setpoint").state == "39"
     assert client.state.await_count == 3
+    await updates.put(StateUpdate({"ref_door_ajar": False}, full=False))
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "off"
+    assert client.state.await_count == 3
     assert client.watched == [["test-fridge"]]
     assert coordinator.push_stats["snapshots"] == 0
+
+
+@pytest.mark.parametrize("cause", ["push_closed", "channel_error", "auth", "unloading"])
+async def test_failed_status_read_leaves_recovery_to_the_connection(hass, loaded, cause):
+    entry, client, updates, _, _ = loaded
+    coordinator = entry.runtime_data.coordinators["test-fridge"]
+    if cause == "push_closed":
+        client.push_connected = False
+    elif cause == "channel_error":
+        await updates.put(("test-fridge", ApiError("Channel closed")))
+        await hass.async_block_till_done()
+    elif cause == "unloading":
+        entry.mock_state(hass, ConfigEntryState.UNLOAD_IN_PROGRESS)
+    client.state.side_effect = InvalidAuth("Expired") if cause == "auth" else ApiError("Failed")
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    assert hass.states.get("binary_sensor.kitchen_refrigerator_door").state == "unavailable"
+    assert client.state.await_count == 2
+
+
+async def test_failed_setup_read_leaves_recovery_to_setup_retry(hass, loaded):
+    entry, client, _, _, _ = loaded
+    client.state.side_effect = ApiError("Status timed out")
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert client.state.await_count == 2
 
 
 async def test_recovery_preserves_incoming_updates_and_other_appliances(hass, oven_loaded):
@@ -1084,7 +1156,7 @@ async def test_oven_entities_follow_the_reported_snapshot(hass, oven_loaded):
     entities = er.async_entries_for_device(
         er.async_get(hass), device.id, include_disabled_entities=True
     )
-    assert len(entities) == 25
+    assert len(entities) == 26
     assert {entity.unique_id for entity in entities if entity.disabled_by is not None} == {
         "test-oven_live_reporting_mode",
     }
@@ -1226,3 +1298,206 @@ async def test_push_discovers_all_platforms_for_each_appliance(hass, oven_loaded
     assert hass.states.get("number.kitchen_freezer_setpoint").state == "0"
     assert hass.states.get("sensor.kitchen_freezer_setpoint").state == "0"
     assert {entity_id: registry.async_get(entity_id).id for entity_id in expected} == original
+
+
+DISCARDING_FRIDGE = {
+    "appliance_model": "BI-36UFD",
+    "appliance_type": "1.2.6.1",
+    "ref_set_temp": 38,
+    "frz_set_temp": 0,
+    "ice_maker_on": True,
+    "max_ice_on": False,
+    "night_ice_on": False,
+    "accent_light_level": 100,
+    "sabbath_on": False,
+}
+DISCARDING_WINE = {
+    "appliance_model": "DEU2450WDZ",
+    "appliance_type": "1.14.1.0",
+    "wine_set_temp": 55,
+}
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
+async def test_properties_the_app_discards_are_ignored(hass, cloud_appliance):
+    for update, full in (
+        (None, False),
+        ({"ice_maker_on": False, "accent_light_level": 110}, False),
+        (DISCARDING_FRIDGE, True),
+    ):
+        if update is not None:
+            await cloud_appliance.update(update, full=full)
+        data = cloud_appliance.coordinator.data
+        assert "ice_maker_on" not in data
+        assert "accent_light_level" not in data
+        assert data["max_ice_on"] is False
+    await cloud_appliance.coordinator.async_refresh()
+    assert "ice_maker_on" not in cloud_appliance.coordinator.data
+    for entity_id in (
+        "select.kitchen_accent_light",
+        "select.kitchen_ice_maker",
+        "binary_sensor.kitchen_ice_maker_enabled",
+    ):
+        assert hass.states.get(entity_id) is None
+
+
+@pytest.mark.parametrize(
+    "cloud_appliance",
+    [{key: value for key, value in DISCARDING_FRIDGE.items() if key != "appliance_type"}],
+    indirect=True,
+)
+async def test_a_reported_type_discards_stored_properties(hass, cloud_appliance):
+    assert hass.states.get("select.kitchen_accent_light").state == "On"
+    assert hass.states.get("select.kitchen_ice_maker").state == "On"
+    assert hass.states.get("binary_sensor.kitchen_max_ice").state == "off"
+    await cloud_appliance.update({"appliance_type": "1.2.6.1"})
+    assert "accent_light_level" not in cloud_appliance.coordinator.data
+    assert hass.states.get("select.kitchen_accent_light").state == "unavailable"
+    assert hass.states.get("select.kitchen_ice_maker").state == "unavailable"
+    assert hass.states.get("binary_sensor.kitchen_max_ice").state == "unavailable"
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
+async def test_upgrade_removes_entities_for_discarded_properties(hass, cloud_appliance):
+    entry = cloud_appliance.entry
+    registry = er.async_get(hass)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    stale = [
+        registry.async_get_or_create(domain, DOMAIN, f"appliance_{key}", config_entry=entry)
+        for domain, key in (
+            ("select", "accent_light_level"),
+            ("select", "ice_maker_mode"),
+            ("binary_sensor", "ice_maker_on"),
+            ("binary_sensor", "max_ice_on"),
+            ("sensor", "max_ice_end_time"),
+        )
+    ]
+    kept = registry.async_get_entity_id("number", DOMAIN, "appliance_ref_set_temp")
+    assert kept is not None
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert all(registry.async_get(entity.entity_id) is None for entity in stale)
+    assert registry.async_get(kept) is not None
+    assert hass.states.get(kept).state not in ("unavailable", "unknown")
+
+
+@pytest.mark.parametrize(
+    "cloud_appliance",
+    [{"appliance_model": "DEC1850CI", "appliance_type": "1.21.2.5", "winterize_on": True}],
+    indirect=True,
+)
+async def test_ice_status_appears_without_reported_ice_power(hass, cloud_appliance):
+    assert hass.states.get("sensor.kitchen_ice_maker_status").state == "Off"
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_FRIDGE], indirect=True)
+@pytest.mark.parametrize("reported", [{}, {"appliance_type": None}, {"appliance_type": "bad"}])
+async def test_a_response_without_a_type_keeps_the_known_type(hass, cloud_appliance, reported):
+    coordinator = cloud_appliance.coordinator
+    cloud_appliance.state.pop("appliance_type")
+    cloud_appliance.state.update(reported)
+    await coordinator.async_refresh()
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "ice_maker_on" not in coordinator.data
+    await cloud_appliance.update({"accent_light_level": 100, **reported})
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "accent_light_level" not in coordinator.data
+    coordinator.async_set_update_error(ApiError("Offline"))
+    untyped = {key: value for key, value in DISCARDING_FRIDGE.items() if key != "appliance_type"}
+    await cloud_appliance.update({**untyped, **reported}, full=True)
+    assert coordinator.last_update_success
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "accent_light_level" not in coordinator.data
+    assert hass.states.get("select.kitchen_accent_light") is None
+
+
+@pytest.mark.parametrize(
+    ("cloud_appliance", "removed"),
+    [
+        ({**DISCARDING_WINE, "high_use_on": False}, True),
+        ({**DISCARDING_WINE, "high_use_on": False, "sabbath_on": False}, False),
+        ({**DISCARDING_WINE, "high_use_on": False, "sabbath_on": None}, False),
+    ],
+    indirect=["cloud_appliance"],
+)
+async def test_upgrade_removes_a_mode_select_left_without_modes(hass, cloud_appliance, removed):
+    entry = cloud_appliance.entry
+    registry = er.async_get(hass)
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    mode = registry.async_get_or_create(
+        "select", DOMAIN, "appliance_operating_mode", config_entry=entry
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert (registry.async_get(mode.entity_id) is None) is removed
+
+
+DISCARDING_OVEN = {
+    "appliance_model": "DO3050TE",
+    "appliance_type": "1.15.2.4",
+    "cav_set_temp": 350,
+    "cav2_set_temp": 350,
+    "cav2_probe_on": True,
+    "cav2_probe_at_set_temp": False,
+    "cav2_probe_temp": 120,
+    "cav2_probe_set_temp": 160,
+}
+
+
+@pytest.mark.parametrize("cloud_appliance", [DISCARDING_OVEN], indirect=True)
+async def test_a_discarded_probe_hides_its_entities(hass, cloud_appliance):
+    entry = cloud_appliance.entry
+    registry = er.async_get(hass)
+    unique_ids = {
+        f"appliance_{key}"
+        for key in (
+            "cav2_probe_on",
+            "cav2_probe_at_set_temp",
+            "cav2_probe_temp",
+            "cav2_probe_set_temp",
+        )
+    }
+    assert not [
+        e
+        for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if e.unique_id in unique_ids
+    ]
+    await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    stale = [
+        registry.async_get_or_create(
+            domain, DOMAIN, "appliance_cav2_probe_set_temp", config_entry=entry
+        )
+        for domain in ("number", "sensor")
+    ]
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert all(registry.async_get(entity.entity_id) is None for entity in stale)
+
+
+@pytest.mark.parametrize(
+    "cloud_appliance", [{**DISCARDING_FRIDGE, "appliance_type": "1.2.6.0"}], indirect=True
+)
+@pytest.mark.parametrize("pushed", [None, "bad", 7])
+async def test_an_unusable_pushed_type_does_not_override_a_read(hass, cloud_appliance, pushed):
+    coordinator = cloud_appliance.coordinator
+    assert coordinator.data["ice_maker_on"] is True
+    reading = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_state(device_id):
+        reading.set()
+        await release.wait()
+        return {**DISCARDING_FRIDGE, "appliance_type": "1.2.6.1"}
+
+    cloud_appliance.client.state.side_effect = slow_state
+    refresh = hass.async_create_task(coordinator.async_refresh())
+    await reading.wait()
+    coordinator.apply_update(StateUpdate({"appliance_type": pushed}, full=False))
+    assert coordinator.data["appliance_type"] == "1.2.6.0"
+    release.set()
+    await refresh
+    assert coordinator.data["appliance_type"] == "1.2.6.1"
+    assert "ice_maker_on" not in coordinator.data

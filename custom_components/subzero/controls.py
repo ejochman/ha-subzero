@@ -8,13 +8,18 @@ from homeassistant.exceptions import ServiceValidationError
 from .const import (
     ACCENT_LIGHT_LABELS,
     COOK_MODES,
+    DEPENDENT_ENTITY_KEYS,
     DISHWASHER_MODES,
     DISHWASHER_SWITCHES,
     DOOR_AJAR_TIMEOUTS,
+    EXCLUDED_PROPERTIES,
     FRIDGE_ENUM_OPTIONS,
     FRIDGE_MODE_KEYS,
+    HOOD_BOOLEAN_KEYS,
+    HOOD_INTEGER_RANGES,
     HUMIDITY_LABELS,
     ICE_KEYS,
+    ICE_MODES,
     KITCHEN_TIMERS,
     LEGACY_ACCENT_LIGHT_OPTIONS,
     LEGACY_START_SERIES,
@@ -47,6 +52,31 @@ def appliance_type(data: dict) -> tuple[int, int, int, int] | None:
 
 def is_fridge(data: dict) -> bool:
     return bool(SETPOINT_KEYS.intersection(data))
+
+
+def is_ice_maker(data: dict) -> bool:
+    parts = appliance_type(data)
+    return parts is not None and parts[1] == 21
+
+
+def is_hood(data: dict) -> bool:
+    parts = appliance_type(data)
+    return parts is not None and parts[1] == 23
+
+
+def excluded_properties(data: dict) -> set[str]:
+    """Properties the app discards for the reported appliance type."""
+    parts = appliance_type(data)
+    return EXCLUDED_PROPERTIES.get(parts[1:], set()) if parts is not None else set()
+
+
+def excluded_entity_keys(data: dict) -> set[str]:
+    """Entities the app does not show because of a discarded property."""
+    discarded = excluded_properties(data)
+    keys = {key for prop in discarded for key in (prop, *DEPENDENT_ENTITY_KEYS.get(prop, ()))}
+    if discarded.intersection(FRIDGE_MODE_KEYS) and data.keys().isdisjoint(FRIDGE_MODE_KEYS):
+        keys.add("operating_mode")
+    return keys
 
 
 def accent_light_options(data: dict) -> dict[str, int]:
@@ -84,12 +114,22 @@ def wash_settings_enabled(data: dict) -> bool:
     return type(data.get("wash_status")) is int and data["wash_status"] in {0, 1}
 
 
+def wash_cancel_enabled(data: dict) -> bool:
+    # The app offers cancel while a cycle runs, dries, or waits for a delayed start.
+    status = data.get("wash_status")
+    return data.get("wash_cycle_on") is True or (type(status) is int and status in {2, 5, 7})
+
+
 def supports_control(data: dict, key: str) -> bool:
     if key in KITCHEN_TIMERS:
         prefix = KITCHEN_TIMERS[key]
         return f"{prefix}_active" in data and f"{prefix}_end_time" in data
     if key not in data:
         return False
+    if key in HOOD_BOOLEAN_KEYS or key in HOOD_INTEGER_RANGES:
+        return is_hood(data)
+    if is_ice_maker(data) and key in {"ice_maker_on", "door_ajar_timeout"}:
+        return True
     if key.startswith(("cav_", "cav2_")):
         return key in WRITABLE_BOOLEAN_KEYS | WRITABLE_INTEGER_KEYS
     if key in {
@@ -127,6 +167,43 @@ def appliance_datetime(value, data: dict) -> datetime | None:
         return None
 
 
+def ice_mode(data: dict) -> str | None:
+    keys = {key for key in ICE_KEYS if supports_control(data, key)}
+    if "ice_maker_on" not in keys or any(type(data[key]) is not bool for key in keys):
+        return None
+    active = [name for name, key in ICE_MODES.items() if key in keys and data[key]]
+    if active:
+        return active[0] if len(active) == 1 else None
+    return "On" if data["ice_maker_on"] else "Off"
+
+
+def ice_mode_properties(data: dict, mode: str) -> dict[str, bool]:
+    keys = {key for key in ICE_KEYS if supports_control(data, key)}
+    options = {"Off", "On", *(name for name, key in ICE_MODES.items() if key in keys)}
+    if "ice_maker_on" not in keys or mode not in options:
+        raise ServiceValidationError("The appliance does not support that ice mode.")
+    if any(type(data[key]) is not bool for key in keys):
+        raise ServiceValidationError("The ice maker mode is unknown.")
+    if mode == ice_mode(data):
+        return {}
+    if mode == "Off":
+        return {key: False for key in ("max_ice_on", "night_ice_on", "ice_maker_on") if key in keys}
+    if mode == "On":
+        return {
+            **{key: False for key in ("max_ice_on", "night_ice_on") if key in keys and data[key]},
+            "ice_maker_on": True,
+        }
+    if mode == "Max ice":
+        return {
+            **({"night_ice_on": False} if data.get("night_ice_on") is True else {}),
+            "max_ice_on": True,
+        }
+    return {
+        **({"max_ice_on": False} if "max_ice_on" in keys else {}),
+        "night_ice_on": True,
+    }
+
+
 def timer_minutes(data: dict, key: str) -> float | None:
     prefix = KITCHEN_TIMERS[key]
     if data.get(f"{prefix}_active") is False:
@@ -148,6 +225,9 @@ def control_matches(data: dict, key: str, value: bool | int, requested_at: datet
             and value in ACCENT_LIGHT_LABELS
             and ACCENT_LIGHT_LABELS.get(data[key]) == ACCENT_LIGHT_LABELS[value]
         )
+    if key == "halo_max_percent" and value:
+        # The app treats any nonzero halo level as on.
+        return type(data.get(key)) is int and data[key] != 0
     if key not in KITCHEN_TIMERS:
         if key.endswith("_unit_on") and value is False:
             ready = key.replace("unit_on", "remote_ready")
@@ -165,6 +245,23 @@ def control_matches(data: dict, key: str, value: bool | int, requested_at: datet
         and (duration is None or duration == value)
         and abs((end - requested_at).total_seconds() - value * 60) <= 65
     )
+
+
+def cook_mode_offered(data: dict, key: str, mode: int) -> bool:
+    """Whether the app offers a cooking mode for this oven series and cavity."""
+    parts = appliance_type(data)
+    model = parts[1:] if parts is not None else None
+    series = model[0] if model is not None else None
+    lower = key.startswith("cav2_")
+    if mode == 5:
+        return series == 3 and not lower
+    if mode == 12:
+        return series != 3
+    if lower and mode in {6, 8, 10}:
+        return series != 3 and model not in {(15, 2, 4), (15, 2, 5)}
+    if lower and mode == 4:
+        return model not in {(15, 2, 4), (15, 2, 5), (8, 2, 0)}
+    return True
 
 
 def validate_remote_start(data: dict, key: str) -> None:
@@ -204,12 +301,9 @@ def validate_remote_start(data: dict, key: str) -> None:
 def start_properties(data: dict, key: str, temperature: int | None = None) -> dict:
     """The app's remote-start writes, in its order, from the configured settings."""
     if key == "wash_cycle_on":
-        properties = {}
-        if data.get("wash_cycle") in WASH_CYCLES and data["wash_cycle"] != 0:
-            properties["wash_cycle"] = data["wash_cycle"]
-        if type(data.get("delay_start_timer_duration")) is int:
-            properties["delay_start_timer_duration"] = data["delay_start_timer_duration"]
-        return {**properties, key: True}
+        # The app sends the cycle, delay, and options only when they were
+        # changed in its start dialog; here they are written when changed.
+        return {key: True}
     prefix = key.removesuffix("_unit_on")
     parts = appliance_type(data)
     if parts is not None and parts[1] in LEGACY_START_SERIES:
@@ -267,6 +361,16 @@ def validate_control_properties(data: dict, temperature_unit: str | None, proper
         if key in WRITABLE_BOOLEAN_KEYS:
             if type(value) is not bool or type(data[key]) is not bool:
                 raise ServiceValidationError("The setting requires an on/off value.")
+        elif key in HOOD_INTEGER_RANGES:
+            lower, upper = HOOD_INTEGER_RANGES[key]
+            if type(value) is not int or not lower <= value <= upper:
+                raise ServiceValidationError("The setting is outside the hood's range.")
+            if type(data[key]) is not int:
+                raise ServiceValidationError("The current hood setting is unknown.")
+            if key == "halo_max_percent" and value not in {0, 30}:
+                raise ServiceValidationError("Halo lighting supports only on or off.")
+            if key == "delay_off_duration" and value % 60000:
+                raise ServiceValidationError("Enter a whole number of minutes.")
         elif key in FRIDGE_ENUM_OPTIONS:
             accent = key == "accent_light_level"
             values = (accent_light_options(data) if accent else FRIDGE_ENUM_OPTIONS[key]).values()
@@ -305,9 +409,11 @@ def validate_control_properties(data: dict, temperature_unit: str | None, proper
                 raise ServiceValidationError("The current cooking mode is unknown.")
             if value in MANUAL_COOK_MODES and data[key] != value:
                 raise ServiceValidationError("Start this cooking mode at the oven's control panel.")
+            if value != data[key] and not cook_mode_offered(data, key, value):
+                raise ServiceValidationError("Select a supported cooking mode.")
         else:
-            if temperature_unit != "F":
-                raise ServiceValidationError("Temperature controls require Fahrenheit in the app.")
+            if temperature_unit not in ("F", "C"):
+                raise ServiceValidationError("The appliance's temperature unit is unknown.")
             if not is_finite_number(data[key]):
                 raise ServiceValidationError("The current appliance temperature is unknown.")
             bounds = temperature_range(key, data)
