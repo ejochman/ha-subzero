@@ -823,6 +823,22 @@ async def test_dismiss_button_clears_a_finished_timer(hass, appliances, prefix, 
     assert hass.states.get(entity_id).state == "unavailable"
 
 
+@pytest.mark.parametrize(
+    ("domain", "service", "data"),
+    [
+        ("button", "press", {"entity_id": "button.oven_dismiss_kitchen_timer"}),
+        ("number", "set_value", {"entity_id": "number.oven_kitchen_timer_duration", "value": 0}),
+    ],
+)
+async def test_failed_timer_dismiss_is_not_success(hass, appliances, domain, service, data):
+    await appliances.update("oven", {"kitchen_timer_active": False, "kitchen_timer_complete": True})
+    appliances.client.set_property.side_effect = ApiError("Sub-Zero returned HTTP 503.")
+    with pytest.raises(HomeAssistantError, match="HTTP 503"):
+        await hass.services.async_call(domain, service, data, blocking=True)
+    assert hass.states.get("binary_sensor.oven_kitchen_timer_complete").state == "on"
+    assert appliances.client.set_property.await_count == 3
+
+
 @pytest.mark.parametrize("previous_minutes", [16, 45])
 async def test_timer_ack_without_correct_end_time_is_not_success(
     hass, appliances, previous_minutes
@@ -931,6 +947,20 @@ async def test_dishwasher_cancel_follows_wash_status(hass, appliances):
     appliances.client.set_property.assert_awaited_once_with("dishwasher", "wash_cycle_on", False)
     await hass.async_block_till_done()
     assert hass.states.get(entity_id).state == "unavailable"
+
+
+@pytest.mark.parametrize("status", [5, 7])
+async def test_failed_cancel_is_not_confirmed_by_a_cycle_already_off(hass, appliances, status):
+    entity_id = "button.dishwasher_cancel_wash_cycle"
+    await appliances.update("dishwasher", {"wash_cycle_on": False, "wash_status": status})
+    appliances.client.set_property.side_effect = ApiError("Sub-Zero returned HTTP 503.")
+    with pytest.raises(HomeAssistantError, match="HTTP 503"):
+        await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    assert (
+        appliances.client.set_property.await_args_list
+        == [call("dishwasher", "wash_cycle_on", False)] * 3
+    )
+    assert hass.states.get(entity_id).state != "unavailable"
 
 
 async def test_dishwasher_modes_follow_capability_and_block_start_in_sabbath(hass, appliances):

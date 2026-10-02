@@ -270,7 +270,8 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
                     break
                 raise ServiceValidationError("The appliance is unavailable.")
             requested_at = dt_util.utcnow()
-            if not resend or not control_matches(self.data, key, value, requested_at):
+            matched = control_matches(self.data, key, value, requested_at)
+            if not resend or not matched:
                 validate_control_properties(
                     self.data, self.device.get("temperature_unit"), {key: value}
                 )
@@ -295,6 +296,9 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
                             raise
                         except ApiError as error:
                             last_error = error
+                            if matched:
+                                # A value that already matched cannot confirm a failed write.
+                                continue
                         else:
                             if key not in KITCHEN_TIMERS:
                                 confirm()
