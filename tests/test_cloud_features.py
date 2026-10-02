@@ -622,9 +622,7 @@ async def test_unsupported_cooking_mode_still_allows_turning_off(hass, appliance
         ("1.4.1.1", 9, (85, 110)),
         ("1.4.1.1", 12, (140, 200)),
         ("1.4.1.1", 8, (200, 550)),
-        ("1.8.1.1", 5, (200, 550)),
         ("1.8.1.1", 8, (200, 550)),
-        ("1.15.1.1", 5, (200, 550)),
         ("1.15.1.1", 10, (110, 170)),
     ],
 )
@@ -651,7 +649,7 @@ async def test_oven_temperature_limits_follow_series_and_mode(
     assert appliances.client.set_property.await_count == 2
 
 
-@pytest.mark.parametrize(("series", "mode"), [(3, 12), (4, 3), (4, 0)])
+@pytest.mark.parametrize(("series", "mode"), [(3, 12), (4, 5), (8, 5), (15, 5), (4, 3), (4, 0)])
 async def test_nonadjustable_oven_modes_keep_power_controls(hass, appliances, series, mode):
     await appliances.update(
         "oven", {"appliance_type": f"1.{series}.1.1", "cav_cook_mode": mode, "cav_unit_on": True}

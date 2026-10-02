@@ -283,11 +283,11 @@ OVEN_TEMPERATURE_RANGES = {
         9: (85, 110),
         10: (110, 160),
     },
-    # The app leaves out Convection on series 4 and Convection bake on series 8
-    # and 15, but those ovens have both modes, so they use the series' bake range.
+    # Wolf's manuals give series 4, 8 and 15 the same modes and ranges. The app files
+    # series 4 Convection under Convection bake, a mode only series 3 ovens have.
     **{
         series: {
-            **dict.fromkeys((1, 2, 4, 5, 6, 8), (200, 550)),
+            **dict.fromkeys((1, 2, 4, 6, 8), (200, 550)),
             9: (85, 110),
             10: (110, 170),
             12: (140, 200),
