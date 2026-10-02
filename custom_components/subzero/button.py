@@ -83,6 +83,23 @@ async def async_setup_entry(
             is_ice_maker(coordinator.data) and ICE_DELAY_KEYS.issubset(coordinator.data)
         ),
     )
+    async_setup_entities(
+        entry,
+        async_add_entities,
+        tuple(
+            ButtonEntityDescription(
+                key=f"dismiss_{prefix}", name=name, icon="mdi:timer-off-outline"
+            )
+            for prefix, name in (
+                ("kitchen_timer", "Dismiss kitchen timer"),
+                ("kitchen_timer2", "Dismiss kitchen timer 2"),
+            )
+        ),
+        SubZeroTimerDismissButton,
+        lambda coordinator, description: supports_control(
+            coordinator.data, f"{description.key.removeprefix('dismiss_')}_duration"
+        ),
+    )
 
 
 class SubZeroStartButton(SubZeroEntity, ButtonEntity):
@@ -146,3 +163,19 @@ class SubZeroIceDelayButton(SubZeroEntity, ButtonEntity):
         await self.coordinator.async_set_ice_delay(
             end_current=self.entity_description.key == "end_ice_delay"
         )
+
+
+class SubZeroTimerDismissButton(SubZeroEntity, ButtonEntity):
+    @property
+    def available(self) -> bool:
+        prefix = self.entity_description.key.removeprefix("dismiss_")
+        return (
+            self.coordinator.last_update_success
+            and supports_control(self.coordinator.data, f"{prefix}_duration")
+            and self.coordinator.data.get(f"{prefix}_complete") is True
+        )
+
+    async def async_press(self) -> None:
+        # Like the app's "Tap to Dismiss", writing 0 clears a finished timer.
+        prefix = self.entity_description.key.removeprefix("dismiss_")
+        await self.coordinator.async_set_properties({f"{prefix}_duration": 0})

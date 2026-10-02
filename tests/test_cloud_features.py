@@ -160,6 +160,7 @@ async def appliances(hass, tokens, request, unit_system):
             start = dt_util.utcnow()
             properties = {
                 f"{prefix}_active": value > 0,
+                f"{prefix}_complete": False,
                 f"{prefix}_start_time": start.isoformat() if value else None,
                 f"{prefix}_end_time": (start + timedelta(minutes=value)).isoformat()
                 if value
@@ -807,6 +808,19 @@ async def test_zero_clears_a_finished_timer(hass, appliances, prefix, entity_id)
         "number", "set_value", {"entity_id": entity_id, "value": 0}, blocking=True
     )
     appliances.client.set_property.assert_awaited_once_with("oven", f"{prefix}_duration", 0)
+
+
+@pytest.mark.parametrize(("prefix", "suffix"), [("kitchen_timer", ""), ("kitchen_timer2", "_2")])
+async def test_dismiss_button_clears_a_finished_timer(hass, appliances, prefix, suffix):
+    entity_id = f"button.oven_dismiss_kitchen_timer{suffix}"
+    complete = f"binary_sensor.oven_kitchen_timer{suffix}_complete"
+    assert hass.states.get(entity_id).state == "unavailable"
+    await appliances.update("oven", {f"{prefix}_active": False, f"{prefix}_complete": True})
+    assert hass.states.get(entity_id).state != "unavailable"
+    await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    appliances.client.set_property.assert_awaited_once_with("oven", f"{prefix}_duration", 0)
+    assert hass.states.get(complete).state == "off"
+    assert hass.states.get(entity_id).state == "unavailable"
 
 
 @pytest.mark.parametrize("previous_minutes", [16, 45])

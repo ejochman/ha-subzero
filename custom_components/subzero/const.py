@@ -117,6 +117,7 @@ DEPENDENT_ENTITY_KEYS = {
         "kitchen_timer2_complete",
         "kitchen_timer2_start_time",
         "kitchen_timer2_end_time",
+        "dismiss_kitchen_timer2",
     ),
 }
 ICE_KEYS = ("ice_maker_on", "max_ice_on", "night_ice_on")
