@@ -613,6 +613,51 @@ async def test_unsupported_cooking_mode_still_allows_turning_off(hass, appliance
 
 
 @pytest.mark.parametrize(
+    ("type_id", "entity_id", "options"),
+    [
+        (
+            "1.4.2.3",
+            "select.oven_cooking_mode",
+            ["Bake stone", "Convection roast", "Convection", "Dehydrate", "Warm"],
+        ),
+        (
+            "1.3.2.1",
+            "select.oven_cooking_mode",
+            ["Bake stone", "Convection bake", "Convection roast", "Convection", "Dehydrate"],
+        ),
+        ("1.3.2.1", "select.oven_lower_oven_cooking_mode", ["Bake stone"]),
+        ("1.15.2.4", "select.oven_lower_oven_cooking_mode", ["Warm"]),
+        (
+            "1.8.2.0",
+            "select.oven_lower_oven_cooking_mode",
+            ["Convection roast", "Convection", "Dehydrate", "Warm"],
+        ),
+    ],
+)
+async def test_cooking_modes_follow_series_and_cavity(
+    hass, appliances, type_id, entity_id, options
+):
+    await appliances.update("oven", {"appliance_type": type_id})
+    assert hass.states.get(entity_id).attributes["options"] == ["Off", "Bake", "Roast", *options]
+
+
+async def test_reported_cooking_mode_stays_listed_but_others_are_refused(hass, appliances):
+    entity_id = "select.oven_cooking_mode"
+    await appliances.update("oven", {"appliance_type": "1.15.1.3", "cav_cook_mode": 5})
+    assert hass.states.get(entity_id).state == "Convection bake"
+    assert "Convection bake" in hass.states.get(entity_id).attributes["options"]
+    await appliances.update("oven", {"cav_cook_mode": 1})
+    with pytest.raises(ServiceValidationError, match="not valid"):
+        await hass.services.async_call(
+            "select",
+            "select_option",
+            {"entity_id": entity_id, "option": "Convection bake"},
+            blocking=True,
+        )
+    appliances.client.set_property.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
     ("type_id", "mode", "bounds"),
     [
         ("1.3.1.1", 1, (170, 550)),

@@ -247,6 +247,23 @@ def control_matches(data: dict, key: str, value: bool | int, requested_at: datet
     )
 
 
+def cook_mode_offered(data: dict, key: str, mode: int) -> bool:
+    """Whether the app offers a cooking mode for this oven series and cavity."""
+    parts = appliance_type(data)
+    model = parts[1:] if parts is not None else None
+    series = model[0] if model is not None else None
+    lower = key.startswith("cav2_")
+    if mode == 5:
+        return series == 3 and not lower
+    if mode == 12:
+        return series != 3
+    if lower and mode in {6, 8, 10}:
+        return series != 3 and model not in {(15, 2, 4), (15, 2, 5)}
+    if lower and mode == 4:
+        return model not in {(15, 2, 4), (15, 2, 5), (8, 2, 0)}
+    return True
+
+
 def validate_remote_start(data: dict, key: str) -> None:
     if key == "wash_cycle_on":
         if data.get("remote_ready") is not True:

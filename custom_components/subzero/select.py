@@ -21,6 +21,7 @@ from .const import (
 )
 from .controls import (
     accent_light_options,
+    cook_mode_offered,
     enum_labels,
     ice_mode,
     is_fridge,
@@ -124,7 +125,8 @@ class SubZeroSelect(SubZeroEntity, SelectEntity):
             return [
                 name
                 for name, value in COOK_MODES.items()
-                if value not in MANUAL_COOK_MODES or value == data.get(key)
+                if value == data.get(key)
+                or (value not in MANUAL_COOK_MODES and cook_mode_offered(data, key, value))
             ]
         names = list(ENUM_OPTIONS[key])
         reported = enum_labels(key).get(data.get(key)) if key in FRIDGE_ENUM_OPTIONS else None
