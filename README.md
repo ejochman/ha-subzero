@@ -150,7 +150,7 @@ Unknown wash cycle/status codes show as unknown. The integration sends only supp
 
 ## Appliance events
 
-Each appliance has an **Appliance event** entity for automations. It reports events such as oven preheat, probe targets, timer completion, dishwasher cycles, door alerts, and maintenance notifications. Its attributes include the event type, numeric code, sequence, and appliance timestamp. Unrecognized codes use the `unknown` event type and keep their numeric code.
+Each appliance has an **Appliance event** entity for automations. It reports events such as oven preheat, probe targets, timer completion, dishwasher cycles, door alerts, and maintenance notifications. Its attributes include the event type, numeric code, sequence, and appliance timestamp. Automations match event type IDs such as `refrigerator_door_ajar`, which Home Assistant shows by name, such as Refrigerator door open. Unrecognized codes use the `unknown` event type and keep their numeric code.
 
 The event entity keeps its last occurrence when the connection drops. Events found during a status read are delivered immediately, including while the push connection is recovering.
 

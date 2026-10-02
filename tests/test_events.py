@@ -2,8 +2,10 @@
 
 import json
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_capture_events
 
@@ -35,6 +37,17 @@ def event_changes(events):
         and event.data["old_state"] is not None
         and event.data["old_state"].state != event.data["new_state"].state
     ]
+
+
+async def test_every_event_type_has_a_display_name(hass, cloud_appliance):
+    entity_id = "event.kitchen_appliance_event"
+    assert er.async_get(hass).async_get(entity_id).translation_key == "appliance_event"
+    event_types = hass.states.get(entity_id).attributes["event_types"]
+    component = Path(__file__).parents[1] / "custom_components" / "subzero"
+    for path in ("strings.json", "translations/en.json"):
+        strings = json.loads((component / path).read_text())
+        names = strings["entity"]["event"]["appliance_event"]["state_attributes"]["event_type"]
+        assert sorted(names["state"]) == sorted(event_types)
 
 
 async def test_live_event_becomes_an_event_entity(hass, cloud_appliance):

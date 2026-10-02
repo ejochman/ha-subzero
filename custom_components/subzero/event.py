@@ -18,6 +18,7 @@ async def async_setup_entry(
         (
             EventEntityDescription(
                 key="appliance_event",
+                translation_key="appliance_event",
                 name="Appliance event",
                 event_types=list(NOTIFICATION_TYPES.values()),
             ),
