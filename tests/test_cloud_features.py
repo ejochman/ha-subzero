@@ -882,6 +882,89 @@ async def test_failed_timer_dismiss_is_not_success(hass, appliances, domain, ser
     assert appliances.client.set_property.await_count == 3
 
 
+async def hang(device_id, key, value):
+    await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize(
+    ("device", "update", "entity_id"),
+    [
+        (
+            "oven",
+            {"kitchen_timer_active": False, "kitchen_timer_complete": True},
+            "button.oven_dismiss_kitchen_timer",
+        ),
+        (
+            "dishwasher",
+            {"wash_cycle_on": False, "wash_status": 5},
+            "button.dishwasher_cancel_wash_cycle",
+        ),
+    ],
+)
+async def test_unanswered_resend_is_not_success(hass, appliances, device, update, entity_id):
+    await appliances.update(device, update)
+    appliances.client.set_property.side_effect = hang
+    with pytest.raises(HomeAssistantError, match="did not confirm"):
+        await hass.services.async_call("button", "press", {"entity_id": entity_id}, blocking=True)
+    assert appliances.client.set_property.await_count == 3
+    assert hass.states.get(entity_id).state != "unavailable"
+
+
+async def test_resend_answered_on_retry_succeeds(hass, appliances):
+    await appliances.update("oven", {"kitchen_timer_active": False, "kitchen_timer_complete": True})
+    original = appliances.client.set_property.side_effect
+
+    async def write(device_id, key, value):
+        if appliances.client.set_property.await_count == 1:
+            await hang(device_id, key, value)
+        await original(device_id, key, value)
+
+    appliances.client.set_property.side_effect = write
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.oven_dismiss_kitchen_timer"}, blocking=True
+    )
+    assert appliances.client.set_property.await_count == 2
+    assert hass.states.get("binary_sensor.oven_kitchen_timer_complete").state == "off"
+
+
+async def test_answered_resend_confirms_after_the_push_wait(hass, appliances, monkeypatch):
+    monkeypatch.setattr("custom_components.subzero.coordinator.CONTROL_PUSH_TIMEOUT", 5)
+    await appliances.update("oven", {"kitchen_timer_active": False, "kitchen_timer_complete": True})
+    appliances.behavior["push"] = False
+    original = appliances.client.set_property.side_effect
+
+    async def write(device_id, key, value):
+        await asyncio.sleep(0.03)
+        await original(device_id, key, value)
+
+    appliances.client.set_property.side_effect = write
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.oven_dismiss_kitchen_timer"}, blocking=True
+    )
+    assert appliances.client.set_property.await_count == 1
+    assert hass.states.get("binary_sensor.oven_kitchen_timer_complete").state == "off"
+
+
+async def test_unanswered_start_resend_stops_the_start(hass, appliances):
+    await appliances.update(
+        "oven",
+        {"appliance_type": "17.15.1.3", "cav_remote_ready": True, "cav_cook_mode": 1},
+    )
+    original = appliances.client.set_property.side_effect
+
+    async def write(device_id, key, value):
+        if key == "cav_cook_mode":
+            await hang(device_id, key, value)
+        await original(device_id, key, value)
+
+    appliances.client.set_property.side_effect = write
+    with pytest.raises(HomeAssistantError, match="did not confirm"):
+        await hass.services.async_call(
+            "button", "press", {"entity_id": "button.oven_start_oven"}, blocking=True
+        )
+    assert appliances.client.set_property.await_args_list == [call("oven", "cav_cook_mode", 1)] * 3
+
+
 @pytest.mark.parametrize("previous_minutes", [16, 45])
 async def test_timer_ack_without_correct_end_time_is_not_success(
     hass, appliances, previous_minutes

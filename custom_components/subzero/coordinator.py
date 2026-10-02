@@ -276,6 +276,7 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
                     self.data, self.device.get("temperature_unit"), {key: value}
                 )
             confirmed = asyncio.Event()
+            acknowledged = False
 
             @callback
             def confirm() -> None:
@@ -296,15 +297,17 @@ class SubZeroCoordinator(DataUpdateCoordinator[dict]):
                             raise
                         except ApiError as error:
                             last_error = error
-                            if matched:
-                                # A value that already matched cannot confirm a failed write.
-                                continue
                         else:
+                            acknowledged = True
                             if key not in KITCHEN_TIMERS:
                                 confirm()
                             await asyncio.wait_for(confirmed.wait(), CONTROL_PUSH_TIMEOUT)
                 except TimeoutError:
                     pass
+                if matched and not acknowledged:
+                    # A value that already matched cannot confirm a write that
+                    # failed or went unanswered.
+                    continue
                 if not confirmed.is_set():
                     # A status read cancelled by the deadline would leave the
                     # appliance marked as failed, so it runs afterwards.
