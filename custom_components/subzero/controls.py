@@ -409,6 +409,8 @@ def validate_control_properties(data: dict, temperature_unit: str | None, proper
                 raise ServiceValidationError("The current cooking mode is unknown.")
             if value in MANUAL_COOK_MODES and data[key] != value:
                 raise ServiceValidationError("Start this cooking mode at the oven's control panel.")
+            if value != data[key] and not cook_mode_offered(data, key, value):
+                raise ServiceValidationError("Select a supported cooking mode.")
         else:
             if temperature_unit not in ("F", "C"):
                 raise ServiceValidationError("The appliance's temperature unit is unknown.")

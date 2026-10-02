@@ -657,6 +657,32 @@ async def test_reported_cooking_mode_stays_listed_but_others_are_refused(hass, a
     appliances.client.set_property.assert_not_awaited()
 
 
+async def test_queued_cooking_mode_rechecks_the_offered_modes(hass, appliances):
+    entity_id = "select.oven_cooking_mode"
+    await appliances.update(
+        "oven", {"appliance_type": "1.15.1.3", "cav_cook_mode": 5, "cav_unit_on": True}
+    )
+    coordinator = appliances.entry.runtime_data.coordinators["oven"]
+    async with coordinator._command_lock:
+        tasks = [
+            asyncio.create_task(
+                hass.services.async_call(
+                    "select",
+                    "select_option",
+                    {"entity_id": entity_id, "option": option},
+                    blocking=True,
+                )
+            )
+            for option in ("Bake", "Convection bake")
+        ]
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    await tasks[0]
+    with pytest.raises(ServiceValidationError, match="supported cooking mode"):
+        await tasks[1]
+    appliances.client.set_property.assert_awaited_once_with("oven", "cav_cook_mode", 1)
+
+
 @pytest.mark.parametrize(
     ("type_id", "mode", "bounds"),
     [
