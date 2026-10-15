@@ -1252,7 +1252,9 @@ async def test_oven_discovery_recovers_after_an_unavailable_snapshot(hass, oven_
 @pytest.mark.parametrize("value", [True, "350", None])
 async def test_oven_temperature_rejects_invalid_readings(hass, oven_loaded, value):
     _, _, updates = oven_loaded
-    await updates.put(("test-oven", StateUpdate({"cav_temp": value}, full=False)))
+    await updates.put(
+        ("test-oven", StateUpdate({"cav_unit_on": True, "cav_temp": value}, full=False))
+    )
     await hass.async_block_till_done()
     assert hass.states.get("sensor.wall_oven_oven_temperature").state in {"unknown", "unavailable"}
 
