@@ -94,6 +94,29 @@ async def test_a_probe_temperature_of_one_is_no_reading(hass, cloud_appliance):
     assert state(hass, entity_id) == "120"
 
 
+@pytest.mark.parametrize("cloud_appliance", [SINGLE_RANGE], indirect=True)
+async def test_an_oven_that_is_off_shows_no_temperature(hass, cloud_appliance):
+    # Ranges keep reporting their last temperature after turning off.
+    assert state(hass, "sensor.kitchen_oven_temperature") == "unknown"
+    assert hass.states.get("climate.kitchen_oven").attributes["current_temperature"] is None
+    await cloud_appliance.update({"cav_unit_on": True})
+    assert state(hass, "sensor.kitchen_oven_temperature") == "75"
+    assert hass.states.get("climate.kitchen_oven").attributes["current_temperature"] == 75
+    await cloud_appliance.update({"cav_cook_mode": 11, "cav_temp": 600})
+    assert state(hass, "sensor.kitchen_oven_temperature") == "600"
+    await cloud_appliance.update({"cav_unit_on": False})
+    assert state(hass, "sensor.kitchen_oven_temperature") == "unknown"
+
+
+@pytest.mark.parametrize(
+    "cloud_appliance",
+    [{key: value for key, value in SINGLE_RANGE.items() if key != "cav_unit_on"}],
+    indirect=True,
+)
+async def test_an_oven_without_a_power_state_shows_its_temperature(hass, cloud_appliance):
+    assert state(hass, "sensor.kitchen_oven_temperature") == "75"
+
+
 @pytest.mark.parametrize("cloud_appliance", [RANGE], indirect=True)
 async def test_broil_level_follows_the_broil_setpoint(hass, cloud_appliance):
     entity_id = "sensor.kitchen_right_oven_broil_level"

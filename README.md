@@ -121,7 +121,7 @@ Controls include:
 
 Enable **Remote Ready at the oven before each remote start**. Opening a door cancels it. Broil, Convection broil, Proof, Self clean, and Gourmet must be started at the appliance. Those restrictions also apply to automations. See [Wolf's Remote Ready guide](https://www.subzero-wolf.com/assistance/answers/wolf/m-series-oven/sub-zero-group-owners-app---set-up-remote-access).
 
-Oven temperature fields that report zero while idle show as unknown; probe readings also show as unknown when the probe is not in use or reports 1, the app's no-reading value. The broil level follows the Broil setpoint: below 400°F is Low, 400–499°F Medium, and 500°F or more High. Unknown cooking-mode codes show as unknown and cannot be selected.
+Oven temperature fields that report zero while idle show as unknown; probe readings also show as unknown when the probe is not in use or reports 1, the app's no-reading value. The measured oven temperature shows as unknown while that oven is off, because ranges keep reporting their last reading after turning off. The broil level follows the Broil setpoint: below 400°F is Low, 400–499°F Medium, and 500°F or more High. Unknown cooking-mode codes show as unknown and cannot be selected.
 
 Gourmet program sensors report the appliance's recipe code as a name. Code 0 shows None, and so does a cavity that reports Gourmet mode off; unrecognized codes show as unknown. Select and start Gourmet programs at the oven.
 

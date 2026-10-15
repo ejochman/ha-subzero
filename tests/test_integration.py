@@ -1261,7 +1261,7 @@ async def test_push_discovers_all_platforms_for_each_appliance(hass, oven_loaded
     _, _, updates = oven_loaded
     expected = {
         "climate.wall_oven_lower_oven": "off",
-        "sensor.wall_oven_lower_oven_temperature": "73",
+        "sensor.wall_oven_lower_oven_temperature": "unknown",
         "switch.wall_oven_lower_oven_light": "off",
         "select.wall_oven_lower_oven_cooking_mode": "Bake",
         "number.wall_oven_kitchen_timer_duration": "0",
@@ -1290,7 +1290,9 @@ async def test_push_discovers_all_platforms_for_each_appliance(hass, oven_loaded
         assert hass.states.get(entity_id).state == state
     registry = er.async_get(hass)
     original = {entity_id: registry.async_get(entity_id).id for entity_id in expected}
-    await updates.put(("test-oven", StateUpdate({"cav2_temp": 100}, full=False)))
+    await updates.put(
+        ("test-oven", StateUpdate({"cav2_unit_on": True, "cav2_temp": 100}, full=False))
+    )
     await updates.put(StateUpdate({"frz_set_temp": 0}, full=False))
     await hass.async_block_till_done()
     assert hass.states.get("sensor.wall_oven_lower_oven_temperature").state == "100"

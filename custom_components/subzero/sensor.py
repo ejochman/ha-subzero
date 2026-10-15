@@ -379,6 +379,9 @@ class SubZeroSensor(SubZeroEntity, SensorEntity):
             prefix = key.split("_", 1)[0]
             if value == 0:
                 return None
+            # Ranges keep reporting their last temperature after turning off.
+            if key == f"{prefix}_temp" and self.coordinator.data.get(f"{prefix}_unit_on") is False:
+                return None
             if "_probe_" in key and self.coordinator.data.get(f"{prefix}_probe_on") is not True:
                 return None
             # The app shows a probe temperature of 1 as no reading.

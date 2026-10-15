@@ -90,6 +90,9 @@ class SubZeroClimate(SubZeroEntity, ClimateEntity):
         value = self.coordinator.data.get(key)
         if not is_finite_number(value):
             return None
+        if self._oven and self.coordinator.data.get(f"{self._prefix}_unit_on") is False:
+            # Ranges keep reporting their last temperature after turning off.
+            return None
         return None if self._oven and value == 0 else value
 
     @property

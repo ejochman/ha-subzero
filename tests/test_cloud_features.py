@@ -221,7 +221,7 @@ async def test_cloud_feature_discovery_does_not_send_controls(hass, appliances):
     assert hass.states.get("climate.fridge_refrigerator").attributes["current_temperature"] == 37
     assert hass.states.get("climate.fridge_freezer").attributes["current_temperature"] is None
     assert hass.states.get("climate.oven_lower_oven").state == "off"
-    assert hass.states.get("sensor.oven_lower_oven_temperature").state == "75"
+    assert hass.states.get("sensor.oven_lower_oven_temperature").state == "unknown"
     assert hass.states.get("sensor.dishwasher_wash_cycle").state == "Normal"
     assert hass.states.get("sensor.dishwasher_wash_status").state == "Idle"
     assert hass.states.get("binary_sensor.dishwasher_softener_salt_low").state == "on"
@@ -1493,6 +1493,7 @@ async def test_temperature_readings_and_limits_follow_home_assistant_units(hass,
     assert fridge.attributes["temperature"] == pytest.approx(3.3)
     freezer = hass.states.get("climate.fridge_freezer")
     assert freezer.attributes["temperature"] == pytest.approx(-17.8)
+    await appliances.update("oven", {"cav_unit_on": True})
     oven = hass.states.get("climate.oven_oven")
     assert oven.attributes["current_temperature"] == pytest.approx(23.9)
     assert oven.attributes["temperature"] == pytest.approx(176.7)
