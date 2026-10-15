@@ -146,7 +146,7 @@ Other controls include halo lighting, automatic fan sensitivity (Off, Low, Mediu
 
 Selecting a cycle does not start it. To enable remote starting, hold ENTER on the dishwasher for five seconds, then close the door within four seconds. Opening the door cancels Remote Ready. See [Cove's Remote Ready guide](https://www.subzero-wolf.com/assistance/answers/cove/dishwasher/cove-dishwasher-remote-ready-feature).
 
-Unknown wash cycle/status codes show as unknown. The integration sends only supported option properties; the appliance enforces which options apply to its selected cycle.
+Some dishwashers report Start pending whenever they are idle, which the app shows as Idle. Automations that wait for an idle dishwasher should accept both Idle and Start pending. Unknown wash cycle/status codes show as unknown. The integration sends only supported option properties; the appliance enforces which options apply to its selected cycle.
 
 ## Appliance events
 
